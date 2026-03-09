@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker --version)",
+      "Bash(docker compose version)",
+      "Bash(node --version)",
+      "Bash(npm --version)",
+      "Bash(docker compose ps)",
+      "Bash(docker exec revolution_postgres psql -U revolution_user -d revolution_db -c \"SELECT 1;\")",
+      "Bash(docker exec revolution_postgres psql -h 127.0.0.1 -U revolution_user -d revolution_db -c \"SELECT current_user;\")",
+      "Bash(DATABASE_URL=\"postgresql://revolution_user:revolution_pass@localhost:5432/revolution_db\" npx prisma db pull)",
+      "Bash(DATABASE_URL=\"postgresql://revolution_user:revolution_pass@127.0.0.1:5432/revolution_db\" npx prisma db pull)",
+      "Bash(docker exec revolution_postgres cat /var/lib/postgresql/data/pg_hba.conf)",
+      "Bash(docker exec revolution_postgres bash -c \"cat /var/lib/postgresql/data/pg_hba.conf\")",
+      "Bash(docker exec revolution_postgres bash -c \"psql -U postgres -c \"\"SELECT usename, passwd IS NOT NULL as has_password FROM pg_shadow WHERE usename = ''revolution_user'';\"\"\")",
+      "Bash(docker exec revolution_postgres bash -c \"psql -U revolution_user -d revolution_db -c \"\"SELECT usename, passwd IS NOT NULL as has_password FROM pg_shadow WHERE usename = ''revolution_user'';\"\"\")",
+      "Bash(pnpm install)",
+      "Bash(pnpm db:migrate)",
+      "Bash(pnpm add express-rate-limit rate-limit-redis)",
+      "Bash(docker ps --format \"{{.Names}}\")",
+      "Bash(docker exec revolution_redis redis-cli KEYS \"*\")",
+      "Bash(npx prisma migrate dev --name redis-first-architecture)",
+      "Bash(npx prisma migrate dev --name redis-first-architecture --force)",
+      "Bash(cmd /c \"echo y | npx prisma migrate dev --name redis-first-architecture\")",
+      "Bash(npx prisma db push --force-reset)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :3001)",
+      "Bash(taskkill //f //pid 97744)",
+      "Bash(findstr LISTENING)",
+      "Bash(taskkill //f //pid 76276)",
+      "Bash(cmd /c \"type c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\node_modules\\\\tsx\\\\package.json 2>&1 | findstr \"\"\\\\\"\"version\\\\\"\"\"\"\")",
+      "Bash(cmd /c \"pnpm --version && pnpm list tsx --dir c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\server 2>&1\")",
+      "Bash(cmd /c \"cd c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding && pnpm install 2>&1\")",
+      "Bash(cmd /c \"c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\server\\\\node_modules\\\\.bin\\\\tsx.cmd --version 2>&1\")"
+    ]
+  }
+}

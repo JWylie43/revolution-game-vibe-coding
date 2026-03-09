@@ -1,0 +1,11 @@
+# pnpm-workspace.yaml
+#
+# pnpm uses this file to define the monorepo workspace.
+# (npm uses the "workspaces" field in package.json — pnpm ignores that and uses this instead)
+#
+# Any directory listed here is treated as a separate package.
+# pnpm hoists shared dependencies to the root node_modules.
+
+packages:
+  - "client"
+  - "server"

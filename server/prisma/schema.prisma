@@ -1,0 +1,54 @@
+// schema.prisma
+//
+// Minimal DB schema — only what MUST be persisted long-term.
+//
+// Philosophy:
+//   - User → auth only. Logins must survive server restarts.
+//   - CompletedGame → written once when a game ends normally. Contains the full
+//     final GameState as JSON, including each player's userId, username, and score.
+//     To query a user's match history, use a JSONB containment query:
+//       WHERE final_state->'players' @> '[{"userId": "abc"}]'
+//   - Everything else → Redis only. If the server crashes mid-game, that game is gone.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── User ──────────────────────────────────────────────────────────────────────
+// Used only for authentication. Not linked to game records.
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  email     String   @unique
+  password  String   // bcrypt hash
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// ── CompletedGame ─────────────────────────────────────────────────────────────
+// Written exactly once when all rounds finish. Abandoned games are never written.
+//
+// finalState is the complete GameState object at game end. It contains:
+//   players: [{ userId, username, score, seatNumber, ... }]
+//   board:   [{ blockId, blockName, controlledBy, pointValue }]
+//   winner:  userId of the winner
+//
+// To find all games a user played:
+//   SELECT * FROM completed_games WHERE final_state->'players' @> '[{"userId":"abc"}]'
+model CompletedGame {
+  id         String   @id @default(cuid())
+  code       String   @unique  // e.g. "blue1234"
+  playedAt   DateTime @default(now())
+  durationMs Int
+  finalState Json
+
+  @@map("completed_games")
+}

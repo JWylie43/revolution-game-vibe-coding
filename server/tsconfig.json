@@ -1,0 +1,64 @@
+{
+  // tsconfig.json tells the TypeScript compiler how to behave.
+  // TypeScript (.ts files) can't run directly in Node — it must be compiled to JavaScript first.
+  // These settings control how that compilation works.
+
+  "compilerOptions": {
+    // ── Output Settings ──────────────────────────────────────────────────────
+
+    // Where to put the compiled JavaScript files.
+    // "src/index.ts" compiles to "dist/index.js"
+    "outDir": "./dist",
+
+    // Where the source TypeScript files live.
+    "rootDir": "./src",
+
+    // ── Module System ────────────────────────────────────────────────────────
+
+    // "ESNext" = use the latest JavaScript module features.
+    "module": "ESNext",
+
+    // "bundler" tells TS how to resolve imports. Works well with modern tools.
+    "moduleResolution": "bundler",
+
+    // Allow importing .ts files without specifying the extension.
+    "allowImportingTsExtensions": true,
+
+    // Allow importing CommonJS modules (some older packages still use require()).
+    "esModuleInterop": true,
+
+    // ── Type Checking Strictness ─────────────────────────────────────────────
+
+    // "strict: true" enables a bundle of type-safety rules. Highly recommended.
+    // It catches bugs at compile time that would otherwise only appear at runtime.
+    // Examples: can't use a variable that might be null without checking first.
+    "strict": true,
+
+    // Catch variables declared but never used (common mistake).
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // Error if a function has code paths that don't return a value.
+    "noImplicitReturns": true,
+
+    // ── Environment ──────────────────────────────────────────────────────────
+
+    // "node23" = include type definitions for Node.js built-in APIs.
+    // This tells TypeScript that things like "process", "Buffer", "__dirname" exist.
+    "lib": ["ESNext"],
+    "types": ["node"],
+
+    // Skip type checking of declaration files in node_modules (much faster builds).
+    "skipLibCheck": true,
+
+    // Don't emit .js files — we use tsx to run directly in dev.
+    // For production build, we'd flip this to true (or remove it).
+    "noEmit": true
+  },
+
+  // Only compile files inside the src/ folder.
+  "include": ["src/**/*"],
+
+  // Never compile files in node_modules (compiled code from packages we install).
+  "exclude": ["node_modules", "dist"]
+}

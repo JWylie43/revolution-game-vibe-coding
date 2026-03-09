@@ -1,0 +1,24 @@
+{
+  "name": "revolution-game",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names \"server,client\" --prefix-colors \"blue,green\" \"pnpm --filter revolution-server dev\" \"pnpm --filter revolution-client dev\"",
+    "kill": "npx kill-port 3001 5173",
+    "dev:server": "pnpm --filter revolution-server dev",
+    "dev:client": "pnpm --filter revolution-client dev",
+    "build": "pnpm --filter revolution-server build && pnpm --filter revolution-client build",
+    "dev:clear-limits": "docker exec revolution_redis redis-cli EVAL \"local keys = redis.call('keys', 'rl:*') for _, k in ipairs(keys) do redis.call('del', k) end return #keys\" 0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}

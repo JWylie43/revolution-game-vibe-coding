@@ -1,0 +1,88 @@
+# docker-compose.yml
+#
+# Docker Compose lets you define and run multiple services (databases, servers, etc.)
+# with a single command: "docker compose up"
+#
+# For this project we need two services running locally:
+#   1. PostgreSQL  — our main database (stores users, games, history)
+#   2. Redis       — our in-memory cache (stores active game state, sessions)
+#
+# You do NOT need these installed on your machine directly — Docker runs them
+# in isolated containers. This means the setup is identical for every developer.
+#
+# Prerequisites: Install Docker Desktop from https://www.docker.com/products/docker-desktop/
+
+version: "3.9"
+
+services:
+
+  # ─────────────────────────────────────────────
+  # PostgreSQL — Primary Database
+  # ─────────────────────────────────────────────
+  postgres:
+    # "image" means pull this pre-built container from Docker Hub.
+    # postgres:15 is a stable, widely-used version.
+    image: postgres:15
+
+    # The container name — what Docker calls it internally.
+    container_name: revolution_postgres
+
+    # "environment" sets environment variables inside the container.
+    # PostgreSQL uses these to configure itself on first boot.
+    environment:
+      POSTGRES_USER: revolution_user        # The database username we'll connect with
+      POSTGRES_PASSWORD: revolution_pass    # The password (change this for production!)
+      POSTGRES_DB: revolution_db            # The name of the database to create
+      # Use md5 password auth for host connections (fixes Prisma on Windows/WSL2).
+      # scram-sha-256 (Postgres 15 default) can fail with some Rust-based clients.
+      POSTGRES_HOST_AUTH_METHOD: md5
+
+    # "ports" maps a port on YOUR machine to a port inside the container.
+    # Format: "host_port:container_port"
+    # So localhost:5432 on your machine connects to port 5432 inside the container.
+    # 5432 is PostgreSQL's default port.
+    ports:
+      # Using 5433 on the host side because port 5432 is already taken
+      # by a native Windows PostgreSQL installation.
+      # Format: "host_port:container_port" — container still uses 5432 internally.
+      - "5433:5432"
+
+    # "volumes" persist data even when the container stops.
+    # Without this, ALL your database data is deleted when you run "docker compose down".
+    # postgres_data is a named volume (defined at the bottom of this file).
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # ─────────────────────────────────────────────
+  # Redis — In-Memory Cache & Session Store
+  # ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    # alpine = a very small Linux image. Saves disk space, no functionality difference.
+
+    container_name: revolution_redis
+
+    # Using 6380 on the host side in case port 6379 is already taken
+    # by a native Windows Redis installation (same situation as Postgres/5433).
+    # Format: "host_port:container_port" — container still uses 6379 internally.
+    ports:
+      - "6380:6379"
+
+    # redis_data persists the cache to disk so it survives container restarts.
+    # For pure caching you might skip this, but we're also storing sessions here
+    # so persistence matters.
+    volumes:
+      - redis_data:/data
+
+    # This tells Redis to save data to disk periodically.
+    # Without --appendonly yes, Redis is purely in-memory and loses data on restart.
+    command: redis-server --appendonly yes
+
+# ─────────────────────────────────────────────
+# Named Volumes
+# ─────────────────────────────────────────────
+# These are Docker-managed storage locations on your machine.
+# Docker handles where they actually live — you just reference them by name.
+volumes:
+  postgres_data:
+  redis_data:

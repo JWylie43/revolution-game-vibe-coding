@@ -1,0 +1,20 @@
+/*
+  index.css — Global styles
+
+  Tailwind works via three directives that inject its styles:
+
+  @tailwind base      — resets browser default styles (margins, paddings etc.)
+                        so our design starts from a clean slate
+  @tailwind components — Tailwind's component classes (none by default,
+                         but you can add custom .btn etc. here using @layer)
+  @tailwind utilities  — all the utility classes: flex, p-4, text-white, etc.
+*/
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom global styles go below */
+body {
+  @apply bg-gray-900 text-gray-100 font-sans;
+  /* @apply lets you use Tailwind utility classes in CSS */
+}

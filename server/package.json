@@ -1,0 +1,39 @@
+{
+  "name": "revolution-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --import tsx/esm src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:generate": "prisma generate",
+    "dev:clear-limits": "docker exec revolution_redis redis-cli EVAL \"local keys = redis.call('keys', 'rl:*') for _, k in ipairs(keys) do redis.call('del', k) end return #keys\" 0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.2",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.5",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.3.0",
+    "ioredis": "^5.3.2",
+    "jsonwebtoken": "^9.0.2",
+    "rate-limit-redis": "^4.3.1",
+    "socket.io": "^4.7.4",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "prisma": "^6.19.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.2"
+  }
+}
