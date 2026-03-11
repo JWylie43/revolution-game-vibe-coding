@@ -20,56 +20,56 @@ import axios from "axios";
 // This is separate from the global axios object so our settings don't
 // affect any other axios calls that might exist.
 const api = axios.create({
-  // All requests will be prefixed with /api.
-  // In development, Vite's proxy forwards /api/* to localhost:3001.
-  // In production, this would be your server's URL.
-  baseURL: "/api",
+    // All requests will be prefixed with /api.
+    // In development, Vite's proxy forwards /api/* to localhost:3001.
+    // In production, this would be your server's URL.
+    baseURL: "/api",
 
-  // Default headers for every request
-  headers: {
-    "Content-Type": "application/json",
-  },
+    // Default headers for every request
+    headers: {
+        "Content-Type": "application/json",
+    },
 });
 
 // ── Request Interceptor ───────────────────────────────────────────────────────
 // Runs before EVERY request. We use it to attach the JWT token.
 api.interceptors.request.use((config) => {
-  // Read the token from localStorage.
-  // localStorage persists across browser sessions (unlike sessionStorage).
-  const token = localStorage.getItem("token");
+    // Read the token from localStorage.
+    // localStorage persists across browser sessions (unlike sessionStorage).
+    const token = localStorage.getItem("token");
 
-  if (token) {
-    // Attach the token to the Authorization header.
-    // "Bearer" is the token type — it's a convention for JWT tokens.
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+    if (token) {
+        // Attach the token to the Authorization header.
+        // "Bearer" is the token type — it's a convention for JWT tokens.
+        config.headers.Authorization = `Bearer ${token}`;
+    }
 
-  return config;
+    return config;
 });
 
 // ── Response Interceptor ──────────────────────────────────────────────────────
 // Runs after EVERY response. We use it to handle auth errors globally.
 api.interceptors.response.use(
-  // Success: just pass the response through
-  (response) => response,
+    // Success: just pass the response through
+    (response) => response,
 
-  // Error: handle specific status codes
-  (error) => {
-    const url: string = error.config?.url ?? "";
-    const isAuthEndpoint = url.includes("/auth/login") || url.includes("/auth/register");
+    // Error: handle specific status codes
+    (error) => {
+        const url: string = error.config?.url ?? "";
+        const isAuthEndpoint = url.includes("/auth/login") || url.includes("/auth/register");
 
-    if (error.response?.status === 401 && !isAuthEndpoint) {
-      // Token expired or invalid — clear stored credentials and redirect to login.
-      // This ensures the user is redirected to login from anywhere in the app.
-      // Skip auth endpoints: a failed login is expected, not a session expiry.
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      window.location.href = "/login";
+        if (error.response?.status === 401 && !isAuthEndpoint) {
+            // Token expired or invalid — clear stored credentials and redirect to login.
+            // This ensures the user is redirected to login from anywhere in the app.
+            // Skip auth endpoints: a failed login is expected, not a session expiry.
+            localStorage.removeItem("token");
+            localStorage.removeItem("user");
+            window.location.href = "/login";
+        }
+
+        // Re-throw so individual call sites can also handle the error if needed
+        return Promise.reject(error);
     }
-
-    // Re-throw so individual call sites can also handle the error if needed
-    return Promise.reject(error);
-  }
 );
 
 export default api;

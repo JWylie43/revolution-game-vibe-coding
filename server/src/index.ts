@@ -20,6 +20,7 @@ import { config } from "./config.js";
 import { initializeSocket } from "./socket/index.js";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/user.js";
+import lobbyRoutes from "./routes/lobby.js";
 
 // ── Create Express App ─────────────────────────────────────────────────────────
 const app = express();
@@ -31,10 +32,12 @@ const app = express();
 // By default, browsers block requests from one origin (e.g. localhost:5173)
 // to a different origin (e.g. localhost:3001). This is a browser security feature.
 // We explicitly allow requests from our frontend URL.
-app.use(cors({
-  origin: config.clientUrls,
-  credentials: true,  // Allow cookies (needed if you use httpOnly cookie auth)
-}));
+app.use(
+    cors({
+        origin: config.clientUrls,
+        credentials: true, // Allow cookies (needed if you use httpOnly cookie auth)
+    })
+);
 
 // JSON body parser
 // Without this, req.body would be undefined for POST requests.
@@ -46,17 +49,18 @@ app.use(express.json());
 // rate limiters and other middleware are passed inside the route handlers
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
+app.use("/api/lobby", lobbyRoutes);
 
 // Health check endpoint — used by load balancers and monitoring tools
 // to verify the server is running. Returns 200 OK.
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // 404 handler — catch-all for routes that don't exist
 // This must be LAST — it only runs if no other route matched.
 app.use((_req, res) => {
-  res.status(404).json({ error: "Route not found" });
+    res.status(404).json({ error: "Route not found" });
 });
 
 // ── HTTP Server ────────────────────────────────────────────────────────────────
@@ -70,8 +74,26 @@ const httpServer = createServer(app);
 initializeSocket(httpServer);
 
 // ── Start Server ───────────────────────────────────────────────────────────────
+// On Windows, TCP TIME_WAIT can hold the port briefly after a previous process
+// exits. Rather than crashing, we retry once after a short delay.
+// On Windows, TCP TIME_WAIT (up to 120s) can block rebinding after a messy shutdown.
+// We retry every 3s rather than flooding the logs. Once started, nodemon restarts
+// are clean (closeAllConnections sends RST, which skips TIME_WAIT entirely).
+let retries = 0;
+httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE" && !httpServer.listening) {
+        retries++;
+        console.log(`Port ${config.port} in TIME_WAIT, retry ${retries}...`);
+        setTimeout(() => {
+            if (!httpServer.listening) httpServer.listen(config.port);
+        }, 3000);
+    } else if (!httpServer.listening) {
+        throw err;
+    }
+});
+
 httpServer.listen(config.port, () => {
-  console.log(`
+    console.log(`
 ╔══════════════════════════════════════╗
 ║  Revolution Game Server              ║
 ║  HTTP  → http://localhost:${config.port}     ║
@@ -81,12 +103,13 @@ httpServer.listen(config.port, () => {
   `);
 });
 
-// Graceful shutdown: when the process receives SIGTERM (e.g. from Docker),
-// close the server cleanly rather than cutting connections abruptly.
-process.on("SIGTERM", () => {
-  console.log("SIGTERM received, shutting down gracefully...");
-  httpServer.close(() => {
-    console.log("Server closed");
-    process.exit(0);
-  });
-});
+// Graceful shutdown: called on SIGTERM (Docker/prod) and SIGINT (tsx watch/Ctrl+C).
+// closeAllConnections() is required to force-close WebSocket connections — without it,
+// httpServer.close() waits forever for Socket.io connections to drain, keeping the
+// port bound and causing EADDRINUSE on the next restart.
+function shutdown() {
+    httpServer.closeAllConnections();
+    httpServer.close(() => process.exit(0));
+}
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

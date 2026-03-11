@@ -17,30 +17,30 @@ router.use(apiLimiter, requireAuth);
 
 // ── GET /me ────────────────────────────────────────────────────────────────────
 router.get("/me", async (req, res) => {
-  const userId = req.user!.userId;
+    const userId = req.user!.userId;
 
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        avatarUrl: true,
-        createdAt: true,
-      },
-    });
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                username: true,
+                email: true,
+                avatarUrl: true,
+                createdAt: true,
+            },
+        });
 
-    if (!user) {
-      res.status(404).json({ error: "User not found" });
-      return;
+        if (!user) {
+            res.status(404).json({ error: "User not found" });
+            return;
+        }
+
+        res.json(user);
+    } catch (error) {
+        console.error("Get profile error:", error);
+        res.status(500).json({ error: "Server error" });
     }
-
-    res.json(user);
-  } catch (error) {
-    console.error("Get profile error:", error);
-    res.status(500).json({ error: "Server error" });
-  }
 });
 
 export default router;

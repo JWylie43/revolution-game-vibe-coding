@@ -1,133 +1,158 @@
 // game/blocks.ts
 //
-// Defines all the board spaces ("blocks") in Revolution.
+// Defines all game data for Revolution:
+//   BID_SPACES   — the 12 figures players bid on each round
+//   BOARD_LOCATIONS — the 7 city locations where influence blocks are placed
 //
-// In Revolution, the board represents a city. Players bid on city figures
-// (the Printer, Apothecary, etc.) to gain support tokens (victory points)
-// and special abilities.
+// Bid board mechanics:
+//   - Each round, players secretly allocate gold/blackmail/force tokens across bid spaces
+//   - The player with the highest total bid wins each space; ties broken by force > blackmail > gold
+//   - Winning a space gives the listed rewards immediately
+//   - Rewards include direct support, token grants, placing an influence block, or a special action
 //
-// Data source: Steve Jackson Games Revolution rulebook
-// https://www.sjgames.com/revolution/
+// Board location mechanics:
+//   - Board locations have a fixed number of influence slots
+//   - Winning certain bid spaces lets you place one influence block in the linked location
+//   - At game end, the player with the most blocks in a location earns that location's support bonus
 //
-// Each block has:
-//   - A unique ID (used as the key everywhere)
-//   - A display name
-//   - How many support points winning this block awards
-//   - A special ability (some blocks give bonus effects when won)
+// Source: Steve Jackson Games Revolution! rulebook
 
-export interface Block {
-  id: string;
-  name: string;
-  supportPoints: number;  // Victory points awarded to the winner each round
-  description: string;    // What this block does / its special ability
+// ── Bid Space ─────────────────────────────────────────────────────────────────
+
+export interface BidSpace {
+    id: string;
+    name: string;
+    // Bid restrictions — shown as colored backgrounds on the physical board
+    noForce: boolean;      // Red background: cannot bid Force tokens on this space
+    noBlackmail: boolean;  // Dark background: cannot bid Blackmail tokens on this space
+    // What the winner receives
+    rewards: {
+        support: number;
+        gold: number;
+        blackmail: number;
+        force: number;
+        influenceLocation: string | null;  // locationId to place an influence block, or null
+        special: "spy" | "apothecary" | null;
+    };
 }
 
-// The complete list of blocks in Revolution.
-// In the physical game these are tiles on a city board.
-export const BLOCKS: Block[] = [
-  // ── High-Value Blocks ──────────────────────────────────────────────────────
-  // These are worth the most points and are heavily contested.
-  {
-    id: "general",
-    name: "General",
-    supportPoints: 4,
-    description: "Controls military force. Worth 4 support.",
-  },
-  {
-    id: "captain",
-    name: "Captain",
-    supportPoints: 3,
-    description: "Commands the city guard. Worth 3 support.",
-  },
-  {
-    id: "innkeeper",
-    name: "Innkeeper",
-    supportPoints: 3,
-    description: "Runs the main tavern, hub of information. Worth 3 support.",
-  },
-  {
-    id: "magistrate",
-    name: "Magistrate",
-    supportPoints: 3,
-    description: "Enforces city law. Worth 3 support.",
-  },
+// ── Board Location ─────────────────────────────────────────────────────────────
 
-  // ── Mid-Value Blocks ───────────────────────────────────────────────────────
-  {
-    id: "priest",
-    name: "Priest",
-    supportPoints: 2,
-    description: "Leads the church. Worth 2 support.",
-  },
-  {
-    id: "aristocrat",
-    name: "Aristocrat",
-    supportPoints: 2,
-    description: "Represents the nobility. Worth 2 support.",
-  },
-  {
-    id: "merchant",
-    name: "Merchant",
-    supportPoints: 2,
-    description: "Controls trade. Worth 2 support.",
-  },
-  {
-    id: "printer",
-    name: "Printer",
-    supportPoints: 2,
-    description: "Controls the press. Worth 2 support.",
-  },
+export interface BoardLocation {
+    id: string;
+    name: string;
+    slots: number;          // Total influence block slots in this location
+    endGameSupport: number; // Support awarded to the majority controller at game end
+}
 
-  // ── Token-Granting Blocks ──────────────────────────────────────────────────
-  // These give you more tokens to bid with in future rounds.
-  {
-    id: "apothecary",
-    name: "Apothecary",
-    supportPoints: 1,
-    description: "Grants 1 gold token next round in addition to 1 support.",
-  },
-  {
-    id: "blackmailer",
-    name: "Blackmailer",
-    supportPoints: 1,
-    description: "Grants 1 blackmail token next round in addition to 1 support.",
-  },
-  {
-    id: "mercenary",
-    name: "Mercenary",
-    supportPoints: 1,
-    description: "Grants 1 force token next round in addition to 1 support.",
-  },
+// ── The 12 Bid Spaces ──────────────────────────────────────────────────────────
 
-  // ── Special Blocks ─────────────────────────────────────────────────────────
-  {
-    id: "spy",
-    name: "Spy",
-    supportPoints: 0,
-    description: "Lets you peek at one opponent's bid before the reveal. Worth 0 support but grants intel.",
-  },
-  {
-    id: "aristocrat_house",
-    name: "Aristocrat's House",
-    supportPoints: 1,
-    description: "Worth 1 support.",
-  },
+export const BID_SPACES: BidSpace[] = [
+    // ── Row 1: Red backgrounds (No Force) ─────────────────────────────────────
+    {
+        id: "general",
+        name: "General",
+        noForce: true, noBlackmail: false,
+        rewards: { support: 1, gold: 0, blackmail: 0, force: 1, influenceLocation: "fortress", special: null },
+    },
+    {
+        id: "captain",
+        name: "Captain",
+        noForce: true, noBlackmail: false,
+        rewards: { support: 1, gold: 0, blackmail: 0, force: 1, influenceLocation: "harbor", special: null },
+    },
+    // ── Row 1: Dark backgrounds (No Blackmail) ─────────────────────────────────
+    {
+        id: "innkeeper",
+        name: "Innkeeper",
+        noForce: false, noBlackmail: true,
+        rewards: { support: 3, gold: 0, blackmail: 1, force: 0, influenceLocation: "tavern", special: null },
+    },
+    {
+        id: "magistrate",
+        name: "Magistrate",
+        noForce: false, noBlackmail: true,
+        rewards: { support: 1, gold: 0, blackmail: 1, force: 0, influenceLocation: "town_hall", special: null },
+    },
+    // ── Row 2: No bid restrictions ─────────────────────────────────────────────
+    {
+        id: "priest",
+        name: "Priest",
+        noForce: false, noBlackmail: false,
+        rewards: { support: 6, gold: 0, blackmail: 0, force: 0, influenceLocation: "cathedral", special: null },
+    },
+    {
+        id: "aristocrat",
+        name: "Aristocrat",
+        noForce: false, noBlackmail: false,
+        rewards: { support: 5, gold: 3, blackmail: 0, force: 0, influenceLocation: "plantation", special: null },
+    },
+    {
+        id: "merchant",
+        name: "Merchant",
+        noForce: false, noBlackmail: false,
+        rewards: { support: 3, gold: 5, blackmail: 0, force: 0, influenceLocation: "market", special: null },
+    },
+    {
+        id: "printer",
+        name: "Printer",
+        noForce: false, noBlackmail: false,
+        rewards: { support: 10, gold: 0, blackmail: 0, force: 0, influenceLocation: null, special: null },
+    },
+    // ── Row 3: Special/action spaces ──────────────────────────────────────────
+    {
+        id: "rogue",
+        name: "Rogue",
+        noForce: true, noBlackmail: false,
+        rewards: { support: 0, gold: 0, blackmail: 2, force: 0, influenceLocation: null, special: null },
+    },
+    {
+        id: "spy",
+        name: "Spy",
+        noForce: false, noBlackmail: true,
+        rewards: { support: 0, gold: 0, blackmail: 0, force: 0, influenceLocation: null, special: "spy" },
+    },
+    {
+        id: "apothecary",
+        name: "Apothecary",
+        noForce: true, noBlackmail: false,
+        rewards: { support: 0, gold: 0, blackmail: 0, force: 0, influenceLocation: null, special: "apothecary" },
+    },
+    {
+        id: "mercenary",
+        name: "Mercenary",
+        noForce: true, noBlackmail: false,
+        rewards: { support: 3, gold: 0, blackmail: 0, force: 1, influenceLocation: null, special: null },
+    },
 ];
 
-// A lookup map: blockId → Block. Faster than searching the array every time.
-export const BLOCK_MAP: Record<string, Block> = Object.fromEntries(
-  BLOCKS.map((b) => [b.id, b])
+export const BID_SPACE_MAP: Record<string, BidSpace> = Object.fromEntries(
+    BID_SPACES.map((s) => [s.id, s])
 );
 
-// Total number of rounds in a game.
-// Revolution ends after all board spaces have been contested N rounds.
-// Standard game: 5 rounds.
+// ── The 7 Board Locations ──────────────────────────────────────────────────────
+// Slot counts and support values from the physical game board.
+
+export const BOARD_LOCATIONS: BoardLocation[] = [
+    { id: "plantation", name: "Plantation", slots: 6, endGameSupport: 30 },
+    { id: "tavern",     name: "Tavern",     slots: 4, endGameSupport: 20 },
+    { id: "cathedral",  name: "Cathedral",  slots: 7, endGameSupport: 35 },
+    { id: "town_hall",  name: "Town Hall",  slots: 6, endGameSupport: 45 },
+    { id: "fortress",   name: "Fortress",   slots: 8, endGameSupport: 50 },
+    { id: "market",     name: "Market",     slots: 5, endGameSupport: 25 },
+    { id: "harbor",     name: "Harbor",     slots: 6, endGameSupport: 40 },
+];
+
+export const BOARD_LOCATION_MAP: Record<string, BoardLocation> = Object.fromEntries(
+    BOARD_LOCATIONS.map((l) => [l.id, l])
+);
+
+// Total rounds per game (standard Revolution)
 export const TOTAL_ROUNDS = 5;
 
-// Starting tokens for each player at the beginning of each round.
-// In Revolution, players receive a fixed allocation of tokens at round start.
+// Starting token allocation at the beginning of each round (base, before bonuses)
 export const STARTING_TOKENS = {
-  gold: 3,
-  blackmail: 2,
-  force: 1,
+    gold: 3,
+    blackmail: 1,
+    force: 1,
 };

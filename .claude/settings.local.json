@@ -31,7 +31,8 @@
       "Bash(cmd /c \"type c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\node_modules\\\\tsx\\\\package.json 2>&1 | findstr \"\"\\\\\"\"version\\\\\"\"\"\"\")",
       "Bash(cmd /c \"pnpm --version && pnpm list tsx --dir c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\server 2>&1\")",
       "Bash(cmd /c \"cd c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding && pnpm install 2>&1\")",
-      "Bash(cmd /c \"c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\server\\\\node_modules\\\\.bin\\\\tsx.cmd --version 2>&1\")"
+      "Bash(cmd /c \"c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\server\\\\node_modules\\\\.bin\\\\tsx.cmd --version 2>&1\")",
+      "Bash(npm install react-hot-toast)"
     ]
   }
 }

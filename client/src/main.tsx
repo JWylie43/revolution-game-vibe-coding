@@ -6,7 +6,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import "./index.css";   // Global CSS (Tailwind base styles)
+import "./index.css"; // Global CSS (Tailwind base styles)
 
 // ReactDOM.createRoot creates a "root" — the container for the entire React app.
 // document.getElementById("root") finds our <div id="root"> in index.html.
@@ -16,7 +16,7 @@ import "./index.css";   // Global CSS (Tailwind base styles)
 //   - Warns about deprecated patterns
 //   - Runs render functions twice to detect side effects (dev only, not production)
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
+    <React.StrictMode>
+        <App />
+    </React.StrictMode>
 );

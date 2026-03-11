@@ -37,19 +37,19 @@ import { config } from "../config.js";
 // The data we encode inside the JWT token.
 // Keep this small — it's sent with every request.
 export interface TokenPayload {
-  userId: string;
-  username: string;
+    userId: string;
+    username: string;
 }
 
 // TypeScript doesn't know that Express's Request object has a "user" field.
 // We extend the type here so we can set req.user in this middleware
 // and read it in route handlers without TypeScript complaining.
 declare global {
-  namespace Express {
-    interface Request {
-      user?: TokenPayload;  // Attached by auth middleware when token is valid
+    namespace Express {
+        interface Request {
+            user?: TokenPayload; // Attached by auth middleware when token is valid
+        }
     }
-  }
 }
 
 // ── The Middleware Function ────────────────────────────────────────────────────
@@ -58,44 +58,44 @@ declare global {
 //   res  = the response we can send
 //   next = call this to pass control to the next middleware/handler
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  // Tokens are sent in the "Authorization" header with format: "Bearer <token>"
-  const authHeader = req.headers.authorization;
+    // Tokens are sent in the "Authorization" header with format: "Bearer <token>"
+    const authHeader = req.headers.authorization;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Authentication required. No token provided." });
-    return; // Stop here — do NOT call next()
-  }
-
-  // Extract the token after "Bearer "
-  const token = authHeader.split(" ")[1];
-
-  try {
-    // jwt.verify does two things:
-    //   1. Checks the signature (proves the token hasn't been tampered with)
-    //   2. Checks if the token is expired
-    // If either check fails, it throws an error.
-    const payload = jwt.verify(token, config.jwtSecret) as TokenPayload;
-
-    // Attach the decoded payload to the request object.
-    // Any route handler after this middleware can read req.user.userId etc.
-    req.user = payload;
-
-    // Call next() to pass the request to the route handler.
-    next();
-  } catch (error) {
-    // jwt.verify throws JsonWebTokenError or TokenExpiredError
-    if (error instanceof jwt.TokenExpiredError) {
-      res.status(401).json({ error: "Token expired. Please log in again." });
-    } else {
-      res.status(401).json({ error: "Invalid token." });
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Authentication required. No token provided." });
+        return; // Stop here — do NOT call next()
     }
-  }
+
+    // Extract the token after "Bearer "
+    const token = authHeader.split(" ")[1];
+
+    try {
+        // jwt.verify does two things:
+        //   1. Checks the signature (proves the token hasn't been tampered with)
+        //   2. Checks if the token is expired
+        // If either check fails, it throws an error.
+        const payload = jwt.verify(token, config.jwtSecret) as TokenPayload;
+
+        // Attach the decoded payload to the request object.
+        // Any route handler after this middleware can read req.user.userId etc.
+        req.user = payload;
+
+        // Call next() to pass the request to the route handler.
+        next();
+    } catch (error) {
+        // jwt.verify throws JsonWebTokenError or TokenExpiredError
+        if (error instanceof jwt.TokenExpiredError) {
+            res.status(401).json({ error: "Token expired. Please log in again." });
+        } else {
+            res.status(401).json({ error: "Invalid token." });
+        }
+    }
 }
 
 // ── Token Creation Helper ─────────────────────────────────────────────────────
 // Used in the auth routes (login, register) to create a new JWT.
 export function createToken(payload: TokenPayload): string {
-  return jwt.sign(payload, config.jwtSecret, {
-    expiresIn: config.jwtExpiresIn,
-  } as jwt.SignOptions);
+    return jwt.sign(payload, config.jwtSecret, {
+        expiresIn: config.jwtExpiresIn,
+    } as jwt.SignOptions);
 }

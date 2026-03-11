@@ -21,22 +21,22 @@ import { config } from "../config.js";
 // In development, we store the client on the global object so it persists
 // across module reloads. In production this doesn't matter (no hot reload).
 declare global {
-  // eslint-disable-next-line no-var
-  var __prisma: PrismaClient | undefined;
+    // eslint-disable-next-line no-var
+    var __prisma: PrismaClient | undefined;
 }
 
 // Create the client with logging.
 // In development, we log all queries to the console so you can see exactly
 // what SQL is being generated. In production, only log errors.
 const prisma =
-  globalThis.__prisma ??
-  new PrismaClient({
-    log: config.isDev ? ["query", "error", "warn"] : ["error"],
-  });
+    globalThis.__prisma ??
+    new PrismaClient({
+        log: config.isDev ? ["query", "error", "warn"] : ["error"],
+    });
 
 // Store on global in development to survive hot reloads.
 if (config.isDev) {
-  globalThis.__prisma = prisma;
+    globalThis.__prisma = prisma;
 }
 
 export default prisma;

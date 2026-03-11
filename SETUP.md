@@ -1,4 +1,19 @@
 # Revolution Game — Setup Guide
+Okay it seems I need to update you how the bidding works and what the game conscept is.
+
+The bid board will ahve 12 palces. Each space will provide some benefits if you win it. You bid on it with gold, blackmail, or force tokens. You start each round with some amount of these...determined by last ronuds results (or at the start of the game you get 3 gold, 1 blackmial and 1 force). The object of the game is to get the most amount of support (the games point system) you do this by either directly earning support by winning some special spaces on the bid board or by being the majortity controller of some location on the board at the end of the game. You can gain control over a location o the board by placing influence blocks in that location. In order to be able to place your block on that location you must earn that locations influecne by bidding on the correct bid spot. Almost all bid spaces will provide influence to a specific location if won...the moment you win it you place the block in that location if that location has an emprt space to place it. The actions taken by the player are taken in order that they show on the bid board. Each locatin grants a certain amount of support to whomever wins it at the end of the game. Now, the bidding and the benefits...each space has its own unique set of benfits from a pool of benefits.
+
+Those benefits are:
+earning gold
+earing blackmail
+earning force
+earning support
+and some special actions like replacing someone else block with your own or swapping two blocks already on the board.
+
+Does this explain better?
+
+So now I want you to
+
 
 ## Prerequisites
 
