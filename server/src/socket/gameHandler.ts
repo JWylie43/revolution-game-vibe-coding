@@ -120,6 +120,36 @@ export async function closeGame(code: string, reason: string, io: AppServer): Pr
     io.to(`game:${code}`).emit("game:closed", { reason });
 }
 
+// ── finalizeGameIfOver ─────────────────────────────────────────────────────────
+// Writes the completed game to Postgres, broadcasts game:over, and schedules
+// Redis cleanup. Safe to call even if phase is not GAME_OVER (no-ops).
+async function finalizeGameIfOver(code: string, state: GameState, io: AppServer): Promise<void> {
+    if (state.phase !== "GAME_OVER") return;
+
+    try {
+        await saveCompletedGame(code, state);
+    } catch (err) {
+        console.error(`Failed to save completed game ${code}:`, err);
+        // Non-fatal — game over is still broadcast even if DB write fails
+    }
+
+    const winner = state.players.reduce((a, b) => (a.score > b.score ? a : b));
+    io.to(`game:${code}`).emit("game:over", {
+        winnerId: winner.userId,
+        winnerUsername: winner.username,
+        finalScores: state.players.map((p) => ({
+            userId: p.userId,
+            username: p.username,
+            score: p.score,
+        })),
+    });
+
+    // Clean up game state from Redis after a short delay so late listeners get the final state
+    setTimeout(() => {
+        deleteGameState(code);
+    }, 30_000);
+}
+
 // ── Register Game Event Handlers ───────────────────────────────────────────────
 export function handleGameEvents(socket: AppSocket, io: AppServer): void {
     // ── game:submitBids ────────────────────────────────────────────────────────
@@ -197,6 +227,179 @@ export function handleGameEvents(socket: AppSocket, io: AppServer): void {
         }
     });
 
+    // ── game:resultsAck ────────────────────────────────────────────────────────
+    // Player acknowledged round results. Once all connected players have acked,
+    // the server advances to the next round.
+    socket.on("game:resultsAck", async (callback) => {
+        const { userId, code, isSpectator } = socket.data;
+
+        if (isSpectator) {
+            callback({ success: false, error: "Spectators cannot acknowledge results" });
+            return;
+        }
+        if (!code) {
+            callback({ success: false, error: "Not in an active game" });
+            return;
+        }
+
+        const state = await getGameState<GameState>(code);
+        if (!state) {
+            callback({ success: false, error: "Game state not found" });
+            return;
+        }
+        if (state.phase !== "ROUND_OVER") {
+            callback({ success: false, error: "Not in ROUND_OVER phase" });
+            return;
+        }
+
+        const updatedState = engine.ackResults(state, userId);
+        await setGameState(code, updatedState);
+        callback({ success: true });
+        io.to(`game:${code}`).emit("game:stateUpdate", updatedState);
+
+        // Advance to next round once every connected player has acknowledged
+        const connectedPlayers = updatedState.players.filter((p) => p.isConnected);
+        const allAcked = connectedPlayers.every((p) =>
+            updatedState.resultsAckUserIds.includes(p.userId)
+        );
+
+        if (allAcked) {
+            const nextRoundState = engine.startNextRound(updatedState);
+            await setGameState(code, nextRoundState);
+            io.to(`game:${code}`).emit("game:stateUpdate", nextRoundState);
+        }
+    });
+
+    // ── game:spyAction ─────────────────────────────────────────────────────────
+    // The spy winner picks an opponent's cube to replace with their own.
+    // Passing skip=true forfeits the action (the cube stays as-is).
+    socket.on("game:spyAction", async ({ locationId, slotIndex, skip }, callback) => {
+        const { userId, code, isSpectator } = socket.data;
+
+        if (isSpectator) {
+            callback({ success: false, error: "Spectators cannot perform actions" });
+            return;
+        }
+        if (!code) {
+            callback({ success: false, error: "Not in an active game" });
+            return;
+        }
+
+        const state = await getGameState<GameState>(code);
+        if (!state) {
+            callback({ success: false, error: "Game state not found" });
+            return;
+        }
+        if (state.phase !== "SPECIAL_ACTIONS") {
+            callback({ success: false, error: "Not in SPECIAL_ACTIONS phase" });
+            return;
+        }
+
+        const current = state.pendingSpecialActions[0];
+        if (!current || current.userId !== userId || current.type !== "spy") {
+            callback({ success: false, error: "Not your turn to perform a spy action" });
+            return;
+        }
+
+        let currentState = state;
+
+        if (!skip) {
+            if (locationId === undefined || slotIndex === undefined) {
+                callback({ success: false, error: "Must provide locationId and slotIndex" });
+                return;
+            }
+            const result = engine.applySpyAction(state, userId, locationId, slotIndex);
+            if ("error" in result) {
+                callback({ success: false, error: result.error });
+                return;
+            }
+            currentState = result.newState;
+        }
+
+        // Pop the completed action off the queue
+        currentState = {
+            ...currentState,
+            pendingSpecialActions: currentState.pendingSpecialActions.slice(1),
+        };
+
+        // If the queue is empty, advance the round
+        const nextState =
+            currentState.pendingSpecialActions.length === 0
+                ? engine.advanceAfterSpecialActions(currentState)
+                : currentState;
+
+        await setGameState(code, nextState);
+        callback({ success: true });
+        io.to(`game:${code}`).emit("game:stateUpdate", nextState);
+
+        await finalizeGameIfOver(code, nextState, io);
+    });
+
+    // ── game:apothecaryAction ──────────────────────────────────────────────────
+    // The apothecary winner picks two occupied cubes and swaps their positions.
+    // Passing skip=true forfeits the action (the board stays as-is).
+    socket.on("game:apothecaryAction", async ({ slotA, slotB, skip }, callback) => {
+        const { userId, code, isSpectator } = socket.data;
+
+        if (isSpectator) {
+            callback({ success: false, error: "Spectators cannot perform actions" });
+            return;
+        }
+        if (!code) {
+            callback({ success: false, error: "Not in an active game" });
+            return;
+        }
+
+        const state = await getGameState<GameState>(code);
+        if (!state) {
+            callback({ success: false, error: "Game state not found" });
+            return;
+        }
+        if (state.phase !== "SPECIAL_ACTIONS") {
+            callback({ success: false, error: "Not in SPECIAL_ACTIONS phase" });
+            return;
+        }
+
+        const current = state.pendingSpecialActions[0];
+        if (!current || current.userId !== userId || current.type !== "apothecary") {
+            callback({ success: false, error: "Not your turn to perform an apothecary action" });
+            return;
+        }
+
+        let currentState = state;
+
+        if (!skip) {
+            if (!slotA || !slotB) {
+                callback({ success: false, error: "Must provide both slotA and slotB" });
+                return;
+            }
+            const result = engine.applyApothecaryAction(state, userId, slotA, slotB);
+            if ("error" in result) {
+                callback({ success: false, error: result.error });
+                return;
+            }
+            currentState = result.newState;
+        }
+
+        // Pop the completed action off the queue
+        currentState = {
+            ...currentState,
+            pendingSpecialActions: currentState.pendingSpecialActions.slice(1),
+        };
+
+        // If the queue is empty, advance the round
+        const nextState =
+            currentState.pendingSpecialActions.length === 0
+                ? engine.advanceAfterSpecialActions(currentState)
+                : currentState;
+
+        await setGameState(code, nextState);
+        callback({ success: true });
+        io.to(`game:${code}`).emit("game:stateUpdate", nextState);
+
+        await finalizeGameIfOver(code, nextState, io);
+    });
+
     // ── game:leave ─────────────────────────────────────────────────────────────
     // Player explicitly leaves the game (navigated away within the SPA).
     // Starts the same 60s reconnect timer as a socket disconnect.
@@ -245,39 +448,11 @@ export async function resolveRound(code: string, io: AppServer): Promise<void> {
     io.to(`game:${code}`).emit("game:roundResolved", results);
     io.to(`game:${code}`).emit("game:stateUpdate", newState);
 
-    if (newState.phase === "GAME_OVER") {
-        // Write completed game to Postgres (the only DB write in the entire game)
-        try {
-            await saveCompletedGame(code, newState);
-        } catch (err) {
-            console.error(`Failed to save completed game ${code}:`, err);
-            // Non-fatal — game over is still broadcast even if DB write fails
-        }
+    // Handle GAME_OVER (can happen if no special actions and board is now full)
+    await finalizeGameIfOver(code, newState, io);
 
-        const winner = newState.players.reduce((a, b) => (a.score > b.score ? a : b));
-        io.to(`game:${code}`).emit("game:over", {
-            winnerId: winner.userId,
-            winnerUsername: winner.username,
-            finalScores: newState.players.map((p) => ({
-                userId: p.userId,
-                username: p.username,
-                score: p.score,
-            })),
-        });
-
-        // Clean up game state from Redis after a short delay
-        // (delay so any late stateUpdate listeners get the final state)
-        setTimeout(() => {
-            deleteGameState(code);
-        }, 30_000);
-    } else {
-        // Pause between rounds so players can review results, then start the next round
-        setTimeout(async () => {
-            const nextRoundState = engine.startNextRound(newState);
-            await setGameState(code, nextRoundState);
-            io.to(`game:${code}`).emit("game:stateUpdate", nextRoundState);
-        }, 5000);
-    }
+    // SPECIAL_ACTIONS and ROUND_OVER are handled by subsequent client events
+    // (game:spyAction, game:apothecaryAction, game:resultsAck)
 }
 
 // ── saveCompletedGame ──────────────────────────────────────────────────────────

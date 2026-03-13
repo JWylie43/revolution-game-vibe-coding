@@ -17,6 +17,8 @@ interface Props {
     isOwner: boolean;
     onReady: () => void;
     onKick: (targetUserId: string) => void;
+    onLeave: () => void;
+    onLogout: () => void;
 }
 
 export default function LobbyView({
@@ -29,9 +31,27 @@ export default function LobbyView({
     isOwner,
     onReady,
     onKick,
+    onLeave,
+    onLogout,
 }: Props) {
     return (
-        <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-4">
+        <div className="min-h-screen bg-gray-900 text-white flex flex-col">
+            {/* Nav */}
+            <nav className="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center justify-between shrink-0">
+                <button
+                    onClick={onLeave}
+                    className="text-sm text-gray-400 hover:text-white transition-colors flex items-center gap-1"
+                >
+                    ← Home
+                </button>
+                <button
+                    onClick={onLogout}
+                    className="text-sm text-gray-400 hover:text-white transition-colors"
+                >
+                    Sign out
+                </button>
+            </nav>
+            <div className="flex-1 flex flex-col items-center justify-center p-4">
             <div className="bg-gray-800 rounded-lg p-8 w-full max-w-lg">
                 {/* Header */}
                 <div className="mb-6">
@@ -131,6 +151,7 @@ export default function LobbyView({
                 <p className="text-xs text-gray-500 text-center mt-3">
                     Need at least 2 players. Game starts when everyone is ready.
                 </p>
+            </div>
             </div>
         </div>
     );

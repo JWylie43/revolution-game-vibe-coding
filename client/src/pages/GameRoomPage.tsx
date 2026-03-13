@@ -21,7 +21,7 @@ type SocketStatus = "connecting" | "connected" | "reconnecting" | "failed";
 export default function GameRoomPage() {
     const { code } = useParams<{ code: string }>();
     const navigate = useNavigate();
-    const { user, token } = useAuthStore();
+    const { user, token, logout } = useAuthStore();
     const [view, setView] = useState<View>("connecting");
     const [socketStatus, setSocketStatus] = useState<SocketStatus>("connecting");
     const [joinError, setJoinError] = useState<string | null>(null);
@@ -218,6 +218,8 @@ export default function GameRoomPage() {
                 isOwner={isOwner}
                 onReady={handleReady}
                 onKick={handleKick}
+                onLeave={() => navigate("/")}
+                onLogout={() => { logout(); navigate("/"); }}
             />
         </>
     );

@@ -23,6 +23,10 @@ interface Props {
     locations?: BoardLocationData[];
     playerColorMap?: Record<string, number>;
     className?: string;
+    // Called when the user clicks on a slot. Only wired up when onSlotClick is provided.
+    onSlotClick?: (locationId: string, slotIndex: number, slot: BoardSlot | null) => void;
+    // Slots to highlight with a selection ring (used during special actions).
+    selectedSlots?: Array<{ locationId: string; slotIndex: number }>;
 }
 
 // Must match SEAT_COLORS in GameView.tsx
@@ -204,7 +208,8 @@ function drawSlot(
     ctx: CanvasRenderingContext2D,
     cx: number, cy: number,
     slot: BoardSlot | undefined,
-    playerColorMap: Record<string, number>
+    playerColorMap: Record<string, number>,
+    isSelected = false
 ) {
     const S = 14; // half-size
     const occupied = slot?.occupiedBy != null;
@@ -242,6 +247,18 @@ function drawSlot(
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(slot!.occupiedByUsername.slice(0, 2).toUpperCase(), cx, cy);
+    }
+
+    // Selection ring — bright green glow drawn outside the tile
+    if (isSelected) {
+        ctx.shadowColor = "#22c55e";
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = "#22c55e";
+        ctx.lineWidth = 2.5;
+        rrect(ctx, cx - S - 3, cy - S - 3, (S + 3) * 2, (S + 3) * 2, 5);
+        ctx.stroke();
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
     }
 }
 
@@ -859,7 +876,8 @@ function drawPlaza(ctx: CanvasRenderingContext2D) {
 function drawAll(
     ctx: CanvasRenderingContext2D,
     locations: BoardLocationData[] | undefined,
-    playerColorMap: Record<string, number>
+    playerColorMap: Record<string, number>,
+    selectedSlotKeys: Set<string>
 ) {
     ctx.clearRect(0, 0, CW, CH);
 
@@ -884,14 +902,21 @@ function drawAll(
         const liveSlots = slotsByLoc[locId];
         for (let i = 0; i < positions.length; i++) {
             const [cx2, cy2] = positions[i];
-            drawSlot(ctx, cx2, cy2, liveSlots?.[i], playerColorMap);
+            const isSelected = selectedSlotKeys.has(`${locId}:${i}`);
+            drawSlot(ctx, cx2, cy2, liveSlots?.[i], playerColorMap, isSelected);
         }
     }
 }
 
 // ── React component ────────────────────────────────────────────────────────────
 
-export default function CityBoard({ locations, playerColorMap = {}, className = "" }: Props) {
+export default function CityBoard({
+    locations,
+    playerColorMap = {},
+    className = "",
+    onSlotClick,
+    selectedSlots = [],
+}: Props) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     useEffect(() => {
@@ -906,14 +931,47 @@ export default function CityBoard({ locations, playerColorMap = {}, className = 
         if (!ctx) return;
 
         ctx.scale(dpr, dpr);
-        drawAll(ctx, locations, playerColorMap);
-    }, [locations, playerColorMap]);
+
+        const selectedSlotKeys = new Set(
+            selectedSlots.map((s) => `${s.locationId}:${s.slotIndex}`)
+        );
+        drawAll(ctx, locations, playerColorMap, selectedSlotKeys);
+    }, [locations, playerColorMap, selectedSlots]);
+
+    function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
+        if (!onSlotClick) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        // Map CSS pixel position to the 780×720 canvas coordinate space
+        const rect = canvas.getBoundingClientRect();
+        const mx = (e.clientX - rect.left) * (CW / rect.width);
+        const my = (e.clientY - rect.top)  * (CH / rect.height);
+
+        // Build slot lookup for this click
+        const slotsByLoc: Record<string, BoardSlot[]> = {};
+        if (locations) {
+            for (const loc of locations) slotsByLoc[loc.locationId] = loc.slots;
+        }
+
+        const S = 14; // slot half-size in canvas coords
+        for (const [locId, positions] of Object.entries(SLOTS)) {
+            for (let i = 0; i < positions.length; i++) {
+                const [cx, cy] = positions[i];
+                if (Math.abs(mx - cx) <= S && Math.abs(my - cy) <= S) {
+                    onSlotClick(locId, i, slotsByLoc[locId]?.[i] ?? null);
+                    return;
+                }
+            }
+        }
+    }
 
     return (
         <canvas
             ref={canvasRef}
-            className={`w-full h-auto ${className}`}
+            className={`w-full h-auto ${className}${onSlotClick ? " cursor-pointer" : ""}`}
             style={{ display: "block" }}
+            onClick={onSlotClick ? handleClick : undefined}
         />
     );
 }

@@ -8,15 +8,62 @@
 //
 // The Socket.io handlers call these functions and then handle the I/O
 // (saving to Redis, emitting events). This file just does the math.
+//
+// ── Game End Condition ────────────────────────────────────────────────────────
+// The game ends when every influence slot on the board is filled.
+// The round where this happens still plays out fully (including spy/apothecary
+// special actions), then the game ends.
+// At game end, the player with the most blocks in each location earns that
+// location's end-game support bonus. Tied majority → nobody earns the bonus.
 
 import type { GameState, BidSubmission, BlockResult, InfluenceSlot } from "../socket/types.js";
 import {
     BID_SPACES,
     BID_SPACE_MAP,
     BOARD_LOCATIONS,
-    TOTAL_ROUNDS,
     STARTING_TOKENS,
 } from "./blocks.js";
+
+// ── isBoardFull ────────────────────────────────────────────────────────────────
+// Returns true when every influence slot on the board is occupied.
+function isBoardFull(boardLocations: GameState["boardLocations"]): boolean {
+    return boardLocations.every((loc) => loc.slots.every((slot) => slot.occupiedBy !== null));
+}
+
+// ── awardMajoritySupport ───────────────────────────────────────────────────────
+// Adds end-game location bonuses to a mutable scores map.
+// Called once at game end after all special actions complete.
+function awardMajoritySupport(
+    boardLocations: GameState["boardLocations"],
+    scores: Record<string, number>
+): void {
+    for (const loc of boardLocations) {
+        const counts: Record<string, number> = {};
+        for (const slot of loc.slots) {
+            if (slot.occupiedBy) {
+                counts[slot.occupiedBy] = (counts[slot.occupiedBy] ?? 0) + 1;
+            }
+        }
+
+        let maxCount = 0;
+        let majority: string | null = null;
+        let tied = false;
+        for (const [uid, count] of Object.entries(counts)) {
+            if (count > maxCount) {
+                maxCount = count;
+                majority = uid;
+                tied = false;
+            } else if (count === maxCount) {
+                tied = true;
+            }
+        }
+
+        // Tied majority → nobody earns the bonus
+        if (majority && !tied && scores[majority] !== undefined) {
+            scores[majority] += loc.endGameSupport;
+        }
+    }
+}
 
 // ── createInitialState ─────────────────────────────────────────────────────────
 // Builds the starting game state. Called once when a game begins.
@@ -51,7 +98,9 @@ function createInitialState(
             })),
         })),
         lastRoundResults: null,
+        resultsAckUserIds: [],
         winner: null,
+        pendingSpecialActions: [],
     };
 }
 
@@ -138,6 +187,12 @@ function markBidsSubmitted(state: GameState, userId: string): GameState {
 //   - Highest total (gold + blackmail + force) wins
 //   - Ties broken by: force first, then blackmail, then gold
 //   - Perfect tie (all amounts identical) = nobody wins the space
+//
+// After resolution:
+//   - If spy or apothecary were won, enter SPECIAL_ACTIONS phase so the
+//     winners can choose which cubes to replace/swap.
+//   - If no special actions, advance via advanceAfterSpecialActions()
+//     which checks board fullness to decide ROUND_OVER vs GAME_OVER.
 function resolveRound(
     state: GameState,
     allBids: Record<string, unknown[]>
@@ -240,9 +295,6 @@ function resolveRound(
                     }
                 }
             }
-
-            // Special actions (Spy and Apothecary require player interaction — deferred to later phase)
-            // For now these are noted in the result but not auto-applied.
         }
 
         results.push({
@@ -259,39 +311,6 @@ function resolveRound(
         });
     }
 
-    const isGameOver = state.roundNumber >= TOTAL_ROUNDS;
-
-    // On the last round, award end-game majority support per location
-    if (isGameOver) {
-        for (const loc of state.boardLocations) {
-            const slots = locationSlots[loc.locationId];
-            const counts: Record<string, number> = {};
-            for (const slot of slots) {
-                if (slot.occupiedBy) {
-                    counts[slot.occupiedBy] = (counts[slot.occupiedBy] ?? 0) + 1;
-                }
-            }
-
-            let maxCount = 0;
-            let majority: string | null = null;
-            let tied = false;
-            for (const [uid, count] of Object.entries(counts)) {
-                if (count > maxCount) {
-                    maxCount = count;
-                    majority = uid;
-                    tied = false;
-                } else if (count === maxCount) {
-                    tied = true;
-                }
-            }
-
-            // Tied majority = nobody earns the bonus
-            if (majority && !tied) {
-                playerUpdates[majority].score += loc.endGameSupport;
-            }
-        }
-    }
-
     const updatedPlayers = state.players.map((p) => ({
         ...p,
         ...playerUpdates[p.userId],
@@ -302,18 +321,149 @@ function resolveRound(
         slots: locationSlots[loc.locationId] ?? loc.slots,
     }));
 
-    const newState: GameState = {
+    // Collect pending special actions (spy and apothecary winners, in board order)
+    const pendingSpecialActions: GameState["pendingSpecialActions"] = results
+        .filter((r) => r.special !== null && r.winnerUserId !== null)
+        .map((r) => ({
+            type: r.special as "spy" | "apothecary",
+            userId: r.winnerUserId!,
+            username: r.winnerUsername!,
+        }));
+
+    // Build the intermediate state after regular resolution
+    const intermediateState: GameState = {
         ...state,
-        phase: isGameOver ? "GAME_OVER" : "ROUND_OVER",
         players: updatedPlayers,
         boardLocations: updatedLocations,
         lastRoundResults: results,
-        winner: isGameOver
-            ? updatedPlayers.reduce((a, b) => (a.score > b.score ? a : b)).userId
-            : null,
+        resultsAckUserIds: [],
+        winner: null,
+        pendingSpecialActions,
     };
 
+    // Determine the phase to enter
+    let newState: GameState;
+    if (pendingSpecialActions.length > 0) {
+        // Spy/apothecary winners must act before the round concludes
+        newState = { ...intermediateState, phase: "SPECIAL_ACTIONS" };
+    } else {
+        // No special actions — transition directly to ROUND_OVER or GAME_OVER
+        newState = advanceAfterSpecialActions(intermediateState);
+    }
+
     return { newState, results };
+}
+
+// ── advanceAfterSpecialActions ─────────────────────────────────────────────────
+// Called when the pendingSpecialActions queue drains to zero.
+// Checks board fullness: full → award majority support and GAME_OVER,
+// otherwise → ROUND_OVER.
+function advanceAfterSpecialActions(state: GameState): GameState {
+    if (!isBoardFull(state.boardLocations)) {
+        return { ...state, phase: "ROUND_OVER" };
+    }
+
+    // Board is full — award end-game majority support bonuses
+    const scores: Record<string, number> = {};
+    for (const p of state.players) {
+        scores[p.userId] = p.score;
+    }
+    awardMajoritySupport(state.boardLocations, scores);
+
+    const updatedPlayers = state.players.map((p) => ({
+        ...p,
+        score: scores[p.userId] ?? p.score,
+    }));
+
+    const winner = updatedPlayers.reduce((a, b) => (a.score > b.score ? a : b));
+
+    return {
+        ...state,
+        phase: "GAME_OVER",
+        players: updatedPlayers,
+        winner: winner.userId,
+    };
+}
+
+// ── applySpyAction ─────────────────────────────────────────────────────────────
+// The spy winner picks one opponent's occupied slot and replaces it with
+// their own cube.
+// Returns the new state, or an error string if the action is invalid.
+function applySpyAction(
+    state: GameState,
+    actingUserId: string,
+    locationId: string,
+    slotIndex: number
+): { newState: GameState } | { error: string } {
+    const loc = state.boardLocations.find((l) => l.locationId === locationId);
+    if (!loc) return { error: "Invalid location" };
+
+    const slot = loc.slots[slotIndex];
+    if (!slot) return { error: "Invalid slot index" };
+    if (slot.occupiedBy === null) return { error: "Slot is empty — you must replace an opponent's cube" };
+    if (slot.occupiedBy === actingUserId) return { error: "Cannot replace your own cube" };
+
+    const actingPlayer = state.players.find((p) => p.userId === actingUserId);
+    if (!actingPlayer) return { error: "Acting player not found" };
+
+    const newLocations = state.boardLocations.map((l) => {
+        if (l.locationId !== locationId) return l;
+        return {
+            ...l,
+            slots: l.slots.map((s, i) => {
+                if (i !== slotIndex) return s;
+                return {
+                    ...s,
+                    occupiedBy: actingUserId,
+                    occupiedByUsername: actingPlayer.username,
+                };
+            }),
+        };
+    });
+
+    return { newState: { ...state, boardLocations: newLocations } };
+}
+
+// ── applyApothecaryAction ──────────────────────────────────────────────────────
+// The apothecary winner picks two occupied slots and swaps their cubes.
+// Both slots must be occupied (by any player). The winner can include their
+// own cubes in the swap.
+function applyApothecaryAction(
+    state: GameState,
+    _actingUserId: string,
+    slotA: { locationId: string; slotIndex: number },
+    slotB: { locationId: string; slotIndex: number }
+): { newState: GameState } | { error: string } {
+    if (slotA.locationId === slotB.locationId && slotA.slotIndex === slotB.slotIndex) {
+        return { error: "Must pick two different slots" };
+    }
+
+    const locA = state.boardLocations.find((l) => l.locationId === slotA.locationId);
+    const locB = state.boardLocations.find((l) => l.locationId === slotB.locationId);
+    if (!locA || !locB) return { error: "Invalid location" };
+
+    const sA = locA.slots[slotA.slotIndex];
+    const sB = locB.slots[slotB.slotIndex];
+    if (!sA || !sB) return { error: "Invalid slot index" };
+    if (sA.occupiedBy === null || sB.occupiedBy === null) {
+        return { error: "Both slots must be occupied" };
+    }
+
+    // Swap the two cubes
+    const newLocations = state.boardLocations.map((loc) => ({
+        ...loc,
+        slots: loc.slots.map((s, i) => {
+            if (loc.locationId === slotA.locationId && i === slotA.slotIndex) {
+                return { ...s, occupiedBy: sB.occupiedBy, occupiedByUsername: sB.occupiedByUsername };
+            }
+            if (loc.locationId === slotB.locationId && i === slotB.slotIndex) {
+                return { ...s, occupiedBy: sA.occupiedBy, occupiedByUsername: sA.occupiedByUsername };
+            }
+            return s;
+        }),
+    }));
+
+    return { newState: { ...state, boardLocations: newLocations } };
 }
 
 // ── startNextRound ─────────────────────────────────────────────────────────────
@@ -325,6 +475,18 @@ function startNextRound(state: GameState): GameState {
         roundNumber: state.roundNumber + 1,
         roundEndTime: Date.now() + 90_000,
         lastRoundResults: null,
+        resultsAckUserIds: [],
+        pendingSpecialActions: [],
+    };
+}
+
+// ── ackResults ─────────────────────────────────────────────────────────────────
+// Records that a player has acknowledged the round results.
+function ackResults(state: GameState, userId: string): GameState {
+    if (state.resultsAckUserIds.includes(userId)) return state;
+    return {
+        ...state,
+        resultsAckUserIds: [...state.resultsAckUserIds, userId],
     };
 }
 
@@ -333,5 +495,9 @@ export const engine = {
     validateBids,
     markBidsSubmitted,
     resolveRound,
+    ackResults,
     startNextRound,
+    applySpyAction,
+    applyApothecaryAction,
+    advanceAfterSpecialActions,
 };

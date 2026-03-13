@@ -32,7 +32,17 @@
       "Bash(cmd /c \"pnpm --version && pnpm list tsx --dir c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\server 2>&1\")",
       "Bash(cmd /c \"cd c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding && pnpm install 2>&1\")",
       "Bash(cmd /c \"c:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\server\\\\node_modules\\\\.bin\\\\tsx.cmd --version 2>&1\")",
-      "Bash(npm install react-hot-toast)"
+      "Bash(npm install react-hot-toast)",
+      "Bash(Start-Process \"C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe\")",
+      "Read(//c/Program Files/Docker/**)",
+      "Read(//c/Program Files/Docker//**)",
+      "Bash(cmd //c start \"\" \"C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe\")",
+      "Bash(npm install react-resizable-panels --workspace=client)",
+      "Bash(npm install react-resizable-panels)",
+      "Bash(pnpm add react-resizable-panels --filter client)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(grep '\"\"version\"\"')",
+      "Bash(node -e \"const m = require\\(''./client/node_modules/react-resizable-panels''\\); console.log\\(Object.keys\\(m\\)\\)\")"
     ]
   }
 }

@@ -58,7 +58,7 @@ export interface InfluenceSlot {
 export interface GameState {
     // The human-readable join code (e.g. "blue1234") — used as the game identifier
     gameId: string;
-    phase: "BID_PHASE" | "RESOLVING" | "ROUND_OVER" | "GAME_OVER";
+    phase: "BID_PHASE" | "RESOLVING" | "SPECIAL_ACTIONS" | "ROUND_OVER" | "GAME_OVER";
     roundNumber: number;
     roundEndTime: number | null; // Unix timestamp (ms) when the bid timer expires
     players: Array<{
@@ -80,7 +80,15 @@ export interface GameState {
         slots: InfluenceSlot[];
     }>;
     lastRoundResults: BlockResult[] | null;
+    resultsAckUserIds: string[]; // players who clicked OK on the round results
     winner: string | null; // userId of winner when game ends
+    // Queue of spy / apothecary actions to resolve before advancing the round.
+    // Index 0 = currently acting player. Empty = no pending actions.
+    pendingSpecialActions: Array<{
+        type: "spy" | "apothecary";
+        userId: string;
+        username: string;
+    }>;
 }
 
 // ── Server → Client Events ─────────────────────────────────────────────────────
@@ -179,6 +187,29 @@ export interface ClientToServerEvents {
     // Submit bids for the current round
     "game:submitBids": (
         data: { bids: BidSubmission[] },
+        callback: (res: { success: boolean; error?: string }) => void
+    ) => void;
+
+    // Acknowledge round results — next round starts when all connected players have acked
+    "game:resultsAck": (
+        callback: (res: { success: boolean; error?: string }) => void
+    ) => void;
+
+    // Spy winner: replace one opponent's cube with their own.
+    // Pass skip=true to forfeit the action without picking.
+    "game:spyAction": (
+        data: { locationId?: string; slotIndex?: number; skip?: boolean },
+        callback: (res: { success: boolean; error?: string }) => void
+    ) => void;
+
+    // Apothecary winner: swap any two occupied cubes on the board.
+    // Pass skip=true to forfeit the action without picking.
+    "game:apothecaryAction": (
+        data: {
+            slotA?: { locationId: string; slotIndex: number };
+            slotB?: { locationId: string; slotIndex: number };
+            skip?: boolean;
+        },
         callback: (res: { success: boolean; error?: string }) => void
     ) => void;
 

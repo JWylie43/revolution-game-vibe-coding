@@ -1,9 +1,15 @@
 // pages/GameView.tsx
 
-import { useState, useMemo, useEffect } from "react";
-import type { GameState, BidSubmission, BlockResult } from "../../../server/src/socket/types.js";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
+import type { PanelImperativeHandle } from "react-resizable-panels";
+import type { GameState, BidSubmission } from "../../../server/src/socket/types.js";
 import socket from "../services/socket.js";
+import { useAuthStore } from "../store/authStore.js";
 import CityBoard from "../components/CityBoard.js";
+import type { BoardSlot } from "../components/CityBoard.js";
+import BidBoardNew, { BID_SPACE_ORDER, type BidMap, type TokenType } from "../components/BidBoardNew.js";
 
 interface Props {
     gameState: GameState;
@@ -20,49 +26,13 @@ const SEAT_COLORS = [
     { bg: "bg-rose-500",    ring: "ring-rose-400",    dot: "#f43f5e" },
 ];
 
-// ── Bid space card styling ──────────────────────────────────────────────────────
-// Matches the physical board: red = No Force, dark = No Blackmail, brown = open
-function bidCardStyle(noForce: boolean, noBlackmail: boolean): string {
-    if (noForce)     return "border-red-800/70 bg-red-950/40";
-    if (noBlackmail) return "border-gray-600/70 bg-gray-900/60";
-    return "border-amber-900/50 bg-amber-950/25";
-}
-
-type BidMap = Record<string, { gold: number; blackmail: number; force: number }>;
-
 function emptyBids(spaces: string[]): BidMap {
     return Object.fromEntries(spaces.map((id) => [id, { gold: 0, blackmail: 0, force: 0 }]));
 }
 
-// The canonical order bid spaces appear on the physical board (row by row, left to right)
-const BID_SPACE_ORDER = [
-    "general", "captain", "innkeeper", "magistrate",
-    "priest", "aristocrat", "merchant", "printer",
-    "rogue", "spy", "apothecary", "mercenary",
-];
-
-// Static display metadata (descriptions + reward labels) — doesn't come from server
-const BID_SPACE_META: Record<string, {
-    noForce: boolean;
-    noBlackmail: boolean;
-    rewardLabel: string;
-    influenceLabel: string | null;
-}> = {
-    general:    { noForce: true,  noBlackmail: false, rewardLabel: "1 support + 1 force",      influenceLabel: "Fortress" },
-    captain:    { noForce: true,  noBlackmail: false, rewardLabel: "1 support + 1 force",      influenceLabel: "Harbor" },
-    innkeeper:  { noForce: false, noBlackmail: true,  rewardLabel: "3 support + 1 blackmail",  influenceLabel: "Tavern" },
-    magistrate: { noForce: false, noBlackmail: true,  rewardLabel: "1 support + 1 blackmail",  influenceLabel: "Town Hall" },
-    priest:     { noForce: false, noBlackmail: false, rewardLabel: "6 support",                influenceLabel: "Cathedral" },
-    aristocrat: { noForce: false, noBlackmail: false, rewardLabel: "5 support + 3 gold",       influenceLabel: "Plantation" },
-    merchant:   { noForce: false, noBlackmail: false, rewardLabel: "3 support + 5 gold",       influenceLabel: "Market" },
-    printer:    { noForce: false, noBlackmail: false, rewardLabel: "10 support",               influenceLabel: null },
-    rogue:      { noForce: true,  noBlackmail: false, rewardLabel: "2 blackmail",              influenceLabel: null },
-    spy:        { noForce: false, noBlackmail: true,  rewardLabel: "Replace an influence cube", influenceLabel: null },
-    apothecary: { noForce: true,  noBlackmail: false, rewardLabel: "Swap two influence cubes", influenceLabel: null },
-    mercenary:  { noForce: true,  noBlackmail: false, rewardLabel: "3 support + 1 force",      influenceLabel: null },
-};
-
 export default function GameView({ gameState, userId }: Props) {
+    const navigate = useNavigate();
+    const { logout } = useAuthStore();
     const sortedPlayers = [...gameState.players].sort((a, b) => b.score - a.score);
     const myPlayer = gameState.players.find((p) => p.userId === userId);
     const isSpectator = !myPlayer;
@@ -80,22 +50,63 @@ export default function GameView({ gameState, userId }: Props) {
     const [bids, setBids] = useState<BidMap>(() => emptyBids(BID_SPACE_ORDER));
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
-    const [showBoard, setShowBoard] = useState(false);
-    const [showResults, setShowResults] = useState(false);
+    const [acking, setAcking] = useState(false);
+
+    // ── Panel / board state ─────────────────────────────────────────────────
+    const boardPanelRef   = usePanelRef();
+    const sidebarPanelRef = usePanelRef();
+    const boardScrollRef  = useRef<HTMLDivElement>(null);
+    const [boardOpen,   setBoardOpen]   = useState(false);
+    const [sidebarOpen, setSidebarOpen] = useState(true);
+    const [boardZoom,   setBoardZoom]   = useState(1);
+
+    // ── Special action selection state ────────────────────────────────────────
+    // Stores the slots the user has clicked for spy (max 1) or apothecary (max 2)
+    const [selectedSlots, setSelectedSlots] = useState<Array<{ locationId: string; slotIndex: number }>>([]);
+    const [specialActionError, setSpecialActionError] = useState<string | null>(null);
 
     // Reset bids when a new round starts
     useEffect(() => {
         setBids(emptyBids(BID_SPACE_ORDER));
         setSubmitError(null);
-        setShowResults(false);
     }, [gameState.roundNumber]);
 
-    // Auto-show results when round resolves
+    // Clear selection when phase changes away from SPECIAL_ACTIONS
     useEffect(() => {
-        if (gameState.phase === "ROUND_OVER" && gameState.lastRoundResults) {
-            setShowResults(true);
+        if (gameState.phase !== "SPECIAL_ACTIONS") {
+            setSelectedSlots([]);
+            setSpecialActionError(null);
         }
     }, [gameState.phase]);
+
+    // Auto-open the board panel when it becomes the current user's turn for
+    // a special action (so they can see the board to click slots)
+    useEffect(() => {
+        if (gameState.phase !== "SPECIAL_ACTIONS") return;
+        const current = gameState.pendingSpecialActions?.[0];
+        if (current?.userId !== userId) return;
+
+        const panel = boardPanelRef.current as PanelImperativeHandle | null;
+        if (panel?.isCollapsed()) {
+            panel.expand();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [gameState.phase, gameState.pendingSpecialActions, userId]);
+
+    // Non-passive wheel listener — intercepts scroll wheel to zoom the board
+    useEffect(() => {
+        const el = boardScrollRef.current;
+        if (!el) return;
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            setBoardZoom((prev) => {
+                const delta = e.deltaY > 0 ? -0.08 : 0.08;
+                return Math.max(0.3, Math.min(4, prev + delta));
+            });
+        };
+        el.addEventListener("wheel", onWheel, { passive: false });
+        return () => el.removeEventListener("wheel", onWheel);
+    }, []);
 
     const spent = useMemo(() => {
         let gold = 0, blackmail = 0, force = 0;
@@ -119,13 +130,8 @@ export default function GameView({ gameState, userId }: Props) {
         force:     maxTokens.force     - spent.force,
     };
 
-    function changeBid(spaceId: string, type: "gold" | "blackmail" | "force", delta: number) {
-        const meta = BID_SPACE_META[spaceId];
-        if (delta > 0) {
-            if (type === "force"     && meta?.noForce)     return;
-            if (type === "blackmail" && meta?.noBlackmail) return;
-            if (remaining[type] <= 0) return;
-        }
+    function changeBid(spaceId: string, type: TokenType, delta: number) {
+        if (delta > 0 && remaining[type] <= 0) return;
         setBids((prev) => {
             const cur = prev[spaceId] ?? { gold: 0, blackmail: 0, force: 0 };
             return { ...prev, [spaceId]: { ...cur, [type]: Math.max(0, cur[type] + delta) } };
@@ -133,7 +139,6 @@ export default function GameView({ gameState, userId }: Props) {
     }
 
     function handleSubmit() {
-        // All tokens must be spent before locking in
         if (remaining.gold > 0 || remaining.blackmail > 0 || remaining.force > 0) {
             setSubmitError(
                 `Spend all tokens first — ${remaining.gold}G ${remaining.blackmail}B ${remaining.force}F remaining`
@@ -155,15 +160,137 @@ export default function GameView({ gameState, userId }: Props) {
     const isBidPhase       = gameState.phase === "BID_PHASE";
     const alreadySubmitted = myPlayer?.hasSubmittedBids ?? false;
     const canBid           = isBidPhase && !alreadySubmitted && !isSpectator;
+    const myAcked          = (gameState.resultsAckUserIds ?? []).includes(userId);
+
+    function handleAck() {
+        setAcking(true);
+        socket.emit("game:resultsAck", (res) => {
+            setAcking(false);
+            if (!res.success) console.error("resultsAck failed:", res.error);
+        });
+    }
+
+    // ── Special action slot click handler ─────────────────────────────────────
+    // Only fires when it's the user's turn in SPECIAL_ACTIONS phase
+    function handleSlotClick(locationId: string, slotIndex: number, slot: BoardSlot | null) {
+        const current = gameState.pendingSpecialActions?.[0];
+        if (!current || current.userId !== userId) return;
+        if (gameState.phase !== "SPECIAL_ACTIONS") return;
+
+        setSpecialActionError(null);
+
+        const isAlreadySelected = selectedSlots.some(
+            (s) => s.locationId === locationId && s.slotIndex === slotIndex
+        );
+
+        if (current.type === "spy") {
+            // Must select an opponent's occupied slot
+            if (!slot?.occupiedBy) {
+                setSpecialActionError("That slot is empty — pick an opponent's cube");
+                return;
+            }
+            if (slot.occupiedBy === userId) {
+                setSpecialActionError("You can't replace your own cube");
+                return;
+            }
+            setSelectedSlots(
+                isAlreadySelected ? [] : [{ locationId, slotIndex }]
+            );
+        } else if (current.type === "apothecary") {
+            // Must select two occupied slots (any owner)
+            if (!slot?.occupiedBy) {
+                setSpecialActionError("That slot is empty — pick an occupied cube");
+                return;
+            }
+            if (isAlreadySelected) {
+                setSelectedSlots((prev) =>
+                    prev.filter((s) => !(s.locationId === locationId && s.slotIndex === slotIndex))
+                );
+            } else if (selectedSlots.length < 2) {
+                setSelectedSlots((prev) => [...prev, { locationId, slotIndex }]);
+            }
+        }
+    }
+
+    function handleConfirmSpy() {
+        if (selectedSlots.length !== 1) return;
+        const { locationId, slotIndex } = selectedSlots[0];
+        setSpecialActionError(null);
+        socket.emit("game:spyAction", { locationId, slotIndex }, (res) => {
+            if (res.success) {
+                setSelectedSlots([]);
+            } else {
+                setSpecialActionError(res.error ?? "Action failed");
+            }
+        });
+    }
+
+    function handleConfirmApothecary() {
+        if (selectedSlots.length !== 2) return;
+        setSpecialActionError(null);
+        socket.emit(
+            "game:apothecaryAction",
+            { slotA: selectedSlots[0], slotB: selectedSlots[1] },
+            (res) => {
+                if (res.success) {
+                    setSelectedSlots([]);
+                } else {
+                    setSpecialActionError(res.error ?? "Action failed");
+                }
+            }
+        );
+    }
+
+    function handleSkipSpecialAction() {
+        const current = gameState.pendingSpecialActions?.[0];
+        if (!current) return;
+        setSelectedSlots([]);
+        setSpecialActionError(null);
+        if (current.type === "spy") {
+            socket.emit("game:spyAction", { skip: true }, () => {});
+        } else {
+            socket.emit("game:apothecaryAction", { skip: true }, () => {});
+        }
+    }
+
+    // Is it currently this user's turn to perform a special action?
+    const isMySpecialTurn =
+        gameState.phase === "SPECIAL_ACTIONS" &&
+        (gameState.pendingSpecialActions?.[0]?.userId === userId);
+
+    const currentSpecialAction = gameState.pendingSpecialActions?.[0] ?? null;
+
+    // v4 imperative panel API: collapse() / expand()
+    function toggleBoard(e: React.MouseEvent) {
+        e.stopPropagation();
+        const panel = boardPanelRef.current as PanelImperativeHandle | null;
+        if (!panel) return;
+        if (panel.isCollapsed()) {
+            panel.expand();
+        } else {
+            panel.collapse();
+        }
+    }
+
+    function toggleSidebar(e: React.MouseEvent) {
+        e.stopPropagation();
+        const panel = sidebarPanelRef.current as PanelImperativeHandle | null;
+        if (!panel) return;
+        if (panel.isCollapsed()) {
+            panel.expand();
+        } else {
+            panel.collapse();
+        }
+    }
 
     return (
-        <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+        <div className="h-screen bg-gray-950 text-white flex flex-col overflow-hidden">
 
             {/* ── Header ──────────────────────────────────────────────────────── */}
             <header className="flex items-center justify-between px-5 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
                 <div className="flex items-center gap-3">
                     <h1 className="font-bold text-base tracking-wide">Revolution!</h1>
-                    <span className="text-sm text-gray-500">Round {gameState.roundNumber} / 5</span>
+                    <span className="text-sm text-gray-500">Round {gameState.roundNumber}</span>
                     <PhaseBadge phase={gameState.phase} />
                 </div>
 
@@ -178,358 +305,393 @@ export default function GameView({ gameState, userId }: Props) {
                         </div>
                     )}
 
-                    {/* Game board button */}
+                    {/* Home */}
                     <button
-                        onClick={() => setShowBoard(true)}
-                        className="px-3 py-1 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors"
+                        onClick={() => { socket.emit("game:leave"); navigate("/"); }}
+                        className="px-3 py-1 text-xs text-gray-400 hover:text-white transition-colors"
+                        title="Leave game and go home (you can rejoin)"
                     >
-                        View Board
+                        ← Home
+                    </button>
+
+                    {/* Sign out */}
+                    <button
+                        onClick={() => { logout(); navigate("/"); }}
+                        className="px-3 py-1 text-xs text-gray-400 hover:text-white transition-colors"
+                    >
+                        Sign out
                     </button>
                 </div>
             </header>
 
-            {/* ── Body ─────────────────────────────────────────────────────────── */}
-            <div className="flex flex-1 overflow-hidden">
+            {/* ── Three-panel body ─────────────────────────────────────────────── */}
+            <div className="flex-1 overflow-hidden">
+                <Group orientation="horizontal" className="h-full">
 
-                {/* ── Bid board ────────────────────────────────────────────────── */}
-                <main className="flex-1 overflow-y-auto p-4">
-
-                    {/* Phase banners */}
-                    {gameState.phase === "RESOLVING" && (
-                        <div className="mb-4 text-center text-yellow-400 font-semibold animate-pulse">
-                            Resolving bids…
+                    {/* ── Left: City Board panel ───────────────────────────────── */}
+                    <Panel
+                        id="board"
+                        panelRef={boardPanelRef}
+                        collapsible
+                        defaultSize="0%"
+                        minSize="20%"
+                        maxSize="55%"
+                        onResize={(size) => setBoardOpen(size.asPercentage > 0)}
+                        className="flex flex-col bg-gray-900"
+                    >
+                        {/* Board header */}
+                        <div className="shrink-0 px-3 py-2 border-b border-gray-800 flex items-center justify-between">
+                            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                                City Board
+                            </h2>
+                            <button
+                                onClick={() => setBoardZoom(1)}
+                                className="text-[10px] text-gray-600 hover:text-gray-300 transition-colors px-1 tabular-nums"
+                                title="Reset zoom (scroll to zoom)"
+                            >
+                                {Math.round(boardZoom * 100)}%
+                            </button>
                         </div>
-                    )}
-                    {gameState.phase === "GAME_OVER" && (
-                        <div className="mb-4 text-center">
-                            <p className="text-3xl font-bold text-yellow-400">Revolution is over!</p>
-                            {gameState.winner && (
-                                <p className="text-gray-300 mt-1">
-                                    Winner:{" "}
-                                    {gameState.players.find((p) => p.userId === gameState.winner)?.username
-                                        ?? gameState.winner}
-                                </p>
-                            )}
-                        </div>
-                    )}
 
-                    {/* 4×3 bid board grid */}
-                    <div className="grid grid-cols-4 gap-2 max-w-4xl mx-auto">
-                        {BID_SPACE_ORDER.map((spaceId) => {
-                            const meta  = BID_SPACE_META[spaceId];
-                            const bid   = bids[spaceId] ?? { gold: 0, blackmail: 0, force: 0 };
-                            const style = bidCardStyle(meta.noForce, meta.noBlackmail);
-
-                            // Find this space's result from last round
-                            const lastResult = gameState.lastRoundResults?.find((r) => r.blockId === spaceId);
-                            const winner     = lastResult?.winnerUsername;
-
-                            return (
-                                <div key={spaceId} className={`rounded-lg border p-3 flex flex-col gap-2 ${style}`}>
-                                    {/* Name */}
-                                    <div className="flex items-start justify-between gap-1">
-                                        <span className="font-bold text-sm leading-tight uppercase tracking-wide">
-                                            {spaceId.charAt(0).toUpperCase() + spaceId.slice(1).replace("_", " ")}
-                                        </span>
-                                        {/* Restriction badges */}
-                                        <div className="flex gap-1 shrink-0">
-                                            {meta.noForce     && <span className="text-[10px] px-1 py-0.5 bg-red-900/70 text-red-300 rounded" title="Cannot bid Force">No F</span>}
-                                            {meta.noBlackmail && <span className="text-[10px] px-1 py-0.5 bg-gray-800 text-gray-300 rounded" title="Cannot bid Blackmail">No B</span>}
-                                        </div>
-                                    </div>
-
-                                    {/* Rewards */}
-                                    <div className="text-xs text-gray-300 leading-tight">{meta.rewardLabel}</div>
-                                    {meta.influenceLabel && (
-                                        <div className="text-xs text-indigo-400 leading-tight">
-                                            → {meta.influenceLabel}
-                                        </div>
-                                    )}
-
-                                    {/* Last round winner */}
-                                    {gameState.phase === "ROUND_OVER" && lastResult && (
-                                        <div className="text-xs mt-auto">
-                                            {winner ? (
-                                                <span className="text-emerald-400">Won: {winner}</span>
-                                            ) : (
-                                                <span className="text-gray-600 italic">Contested</span>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {/* Bid controls */}
-                                    {canBid && (
-                                        <div className="flex gap-1 pt-1.5 border-t border-white/10 mt-auto">
-                                            <BidControl
-                                                value={bid.gold}
-                                                canInc={remaining.gold > 0}
-                                                canDec={bid.gold > 0}
-                                                onInc={() => changeBid(spaceId, "gold", 1)}
-                                                onDec={() => changeBid(spaceId, "gold", -1)}
-                                                color="text-yellow-400"
-                                                symbol="G"
-                                            />
-                                            <BidControl
-                                                value={bid.blackmail}
-                                                canInc={!meta.noBlackmail && remaining.blackmail > 0}
-                                                canDec={bid.blackmail > 0}
-                                                onInc={() => changeBid(spaceId, "blackmail", 1)}
-                                                onDec={() => changeBid(spaceId, "blackmail", -1)}
-                                                color={meta.noBlackmail ? "text-gray-600 opacity-40" : "text-purple-400"}
-                                                symbol="B"
-                                                disabled={meta.noBlackmail}
-                                            />
-                                            <BidControl
-                                                value={bid.force}
-                                                canInc={!meta.noForce && remaining.force > 0}
-                                                canDec={bid.force > 0}
-                                                onInc={() => changeBid(spaceId, "force", 1)}
-                                                onDec={() => changeBid(spaceId, "force", -1)}
-                                                color={meta.noForce ? "text-gray-600 opacity-40" : "text-red-400"}
-                                                symbol="F"
-                                                disabled={meta.noForce}
-                                            />
-                                        </div>
-                                    )}
-
-                                    {/* Show placed bids after submit (mine only, others hidden) */}
-                                    {isBidPhase && alreadySubmitted && !isSpectator && (
-                                        <div className="flex gap-1 pt-1 border-t border-white/10 text-xs opacity-60 mt-auto">
-                                            {bid.gold > 0      && <span className="text-yellow-400">G{bid.gold}</span>}
-                                            {bid.blackmail > 0 && <span className="text-purple-400">B{bid.blackmail}</span>}
-                                            {bid.force > 0     && <span className="text-red-400">F{bid.force}</span>}
-                                            {(bid.gold + bid.blackmail + bid.force === 0) && (
-                                                <span className="text-gray-700 italic">no bid</span>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    {/* ── Submit / status row ──────────────────────────────── */}
-                    <div className="max-w-4xl mx-auto mt-3 flex items-center gap-4 flex-wrap">
-                        {isBidPhase && !isSpectator && (
-                            alreadySubmitted ? (
-                                <div className="flex items-center gap-2 text-emerald-400 font-semibold text-sm">
-                                    <CheckIcon />
-                                    Bids locked in — waiting for others…
+                        {/* Scrollable + zoomable board */}
+                        <div ref={boardScrollRef} className="flex-1 overflow-auto">
+                            {gameState.boardLocations ? (
+                                <div style={{ width: `${boardZoom * 100}%`, minWidth: "100%" }}>
+                                    <CityBoard
+                                        locations={gameState.boardLocations}
+                                        playerColorMap={playerColorMap}
+                                        onSlotClick={isMySpecialTurn ? handleSlotClick : undefined}
+                                        selectedSlots={isMySpecialTurn ? selectedSlots : []}
+                                    />
                                 </div>
                             ) : (
-                                <>
+                                <div className="flex items-center justify-center h-full">
+                                    <p className="text-gray-600 text-sm">Board unavailable</p>
+                                </div>
+                            )}
+                        </div>
+                    </Panel>
+
+                    {/* ── Separator: board ↔ main ──────────────────────────────── */}
+                    <Separator className="relative w-1 bg-gray-800 hover:bg-indigo-500 transition-colors cursor-col-resize">
+                        {/* Toggle button — on the main-content side (right of handle) */}
+                        <button
+                            onClick={toggleBoard}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            className="absolute top-1/2 -translate-y-1/2 -right-3 z-10 w-6 h-6 bg-gray-700 hover:bg-indigo-600 rounded-full flex items-center justify-center text-gray-300 hover:text-white transition-colors shadow-lg border border-gray-600 cursor-pointer"
+                            title={boardOpen ? "Close board" : "Open board"}
+                        >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                {boardOpen
+                                    ? <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                                    : <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                }
+                            </svg>
+                        </button>
+                    </Separator>
+
+                    {/* ── Middle: Main bid board ───────────────────────────────── */}
+                    <Panel id="main" defaultSize="85%" minSize="40%" className="flex flex-col overflow-hidden">
+                        <div className="flex-1 overflow-y-auto p-4">
+
+                            {/* ── Phase banners ─────────────────────────────────── */}
+                            {gameState.phase === "RESOLVING" && (
+                                <div className="mb-4 text-center text-yellow-400 font-semibold animate-pulse">
+                                    Resolving bids…
+                                </div>
+                            )}
+                            {gameState.phase === "GAME_OVER" && (
+                                <div className="mb-4 text-center">
+                                    <p className="text-3xl font-bold text-yellow-400">Revolution is over!</p>
+                                    {gameState.winner && (
+                                        <p className="text-gray-300 mt-1">
+                                            Winner:{" "}
+                                            {gameState.players.find((p) => p.userId === gameState.winner)?.username
+                                                ?? gameState.winner}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* ── Special actions panel ─────────────────────────── */}
+                            {gameState.phase === "SPECIAL_ACTIONS" && currentSpecialAction && (
+                                <div className={`mb-4 max-w-4xl mx-auto rounded-xl border p-4 ${
+                                    isMySpecialTurn
+                                        ? "bg-amber-950/40 border-amber-600/60"
+                                        : "bg-gray-800/60 border-gray-700"
+                                }`}>
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <span className="text-lg">
+                                            {currentSpecialAction.type === "spy" ? "🕵️" : "⚗️"}
+                                        </span>
+                                        <h3 className="font-semibold text-sm text-amber-300 uppercase tracking-wider">
+                                            {currentSpecialAction.type === "spy" ? "Spy Action" : "Apothecary Action"}
+                                        </h3>
+                                        {gameState.pendingSpecialActions.length > 1 && (
+                                            <span className="ml-auto text-xs text-gray-500">
+                                                {gameState.pendingSpecialActions.length} actions remaining
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {isMySpecialTurn ? (
+                                        /* Current user's turn */
+                                        <div>
+                                            <p className="text-sm text-gray-300 mb-3">
+                                                {currentSpecialAction.type === "spy"
+                                                    ? "Click an opponent's cube on the board to replace it with yours, then confirm. Or skip to do nothing."
+                                                    : "Click two occupied cubes on the board to swap them, then confirm. Or skip to do nothing."}
+                                            </p>
+
+                                            {/* Selection status */}
+                                            {currentSpecialAction.type === "spy" && (
+                                                <p className="text-xs text-gray-400 mb-3">
+                                                    {selectedSlots.length === 0
+                                                        ? "No cube selected yet — click one on the board"
+                                                        : "✓ Cube selected — hit Confirm or pick a different one"}
+                                                </p>
+                                            )}
+                                            {currentSpecialAction.type === "apothecary" && (
+                                                <p className="text-xs text-gray-400 mb-3">
+                                                    {selectedSlots.length === 0
+                                                        ? "No cubes selected — click two cubes on the board"
+                                                        : selectedSlots.length === 1
+                                                            ? "1 of 2 cubes selected — click the second cube"
+                                                            : "✓ 2 cubes selected — hit Confirm or reselect"}
+                                                </p>
+                                            )}
+
+                                            {specialActionError && (
+                                                <p className="text-xs text-red-400 mb-3">{specialActionError}</p>
+                                            )}
+
+                                            <div className="flex items-center gap-3">
+                                                <button
+                                                    onClick={
+                                                        currentSpecialAction.type === "spy"
+                                                            ? handleConfirmSpy
+                                                            : handleConfirmApothecary
+                                                    }
+                                                    disabled={
+                                                        currentSpecialAction.type === "spy"
+                                                            ? selectedSlots.length !== 1
+                                                            : selectedSlots.length !== 2
+                                                    }
+                                                    className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-semibold transition-colors"
+                                                >
+                                                    Confirm
+                                                </button>
+                                                <button
+                                                    onClick={handleSkipSpecialAction}
+                                                    className="px-4 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-gray-300 hover:text-white transition-colors"
+                                                >
+                                                    Skip
+                                                </button>
+                                                {!boardOpen && (
+                                                    <button
+                                                        onClick={() => {
+                                                            const panel = boardPanelRef.current as PanelImperativeHandle | null;
+                                                            panel?.expand();
+                                                        }}
+                                                        className="ml-auto px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs text-gray-400 hover:text-white transition-colors"
+                                                    >
+                                                        ← Open Board
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        /* Waiting for another player */
+                                        <p className="text-sm text-gray-400 animate-pulse">
+                                            Waiting for{" "}
+                                            <span className="font-semibold text-white">
+                                                {currentSpecialAction.username}
+                                            </span>{" "}
+                                            to {currentSpecialAction.type === "spy"
+                                                ? "choose a cube to replace"
+                                                : "choose two cubes to swap"}…
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* ── Bid board ─────────────────────────────────────── */}
+                            <BidBoardNew
+                                bids={bids}
+                                remaining={remaining}
+                                canBid={canBid}
+                                phase={gameState.phase}
+                                lastResults={gameState.lastRoundResults ?? undefined}
+                                alreadySubmitted={alreadySubmitted}
+                                playerOrder={sortedPlayers}
+                                onChangeBid={changeBid}
+                                className="max-w-4xl mx-auto"
+                            />
+
+                            {/* ── Submit / status row ──────────────────────────── */}
+                            <div className="max-w-4xl mx-auto mt-3 flex items-center gap-4 flex-wrap">
+                                {isBidPhase && !isSpectator && (
+                                    alreadySubmitted ? (
+                                        <div className="flex items-center gap-2 text-emerald-400 font-semibold text-sm">
+                                            <CheckIcon />
+                                            Bids locked in — waiting for others…
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <button
+                                                onClick={handleSubmit}
+                                                disabled={submitting}
+                                                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg font-semibold text-sm transition-colors"
+                                            >
+                                                {submitting ? "Submitting…" : "Lock In Bids"}
+                                            </button>
+                                            {submitError && (
+                                                <span className="text-red-400 text-sm">{submitError}</span>
+                                            )}
+                                        </>
+                                    )
+                                )}
+
+                                {/* Who has submitted — shown during bid phase */}
+                                {isBidPhase && (
+                                    <div className="flex items-center gap-3 text-xs ml-auto">
+                                        {gameState.players.map((p) => {
+                                            const ci = playerColorMap[p.userId] ?? 0;
+                                            return (
+                                                <span key={p.userId} className="flex items-center gap-1">
+                                                    <span className={`inline-block w-2 h-2 rounded-full ${SEAT_COLORS[ci].bg}`} />
+                                                    <span className={p.hasSubmittedBids ? "text-emerald-400" : "text-gray-600"}>
+                                                        {p.username}{p.hasSubmittedBids ? " ✓" : ""}
+                                                    </span>
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                {/* ROUND_OVER: OK button */}
+                                {gameState.phase === "ROUND_OVER" && !isSpectator && (
                                     <button
-                                        onClick={handleSubmit}
-                                        disabled={submitting}
+                                        onClick={handleAck}
+                                        disabled={myAcked || acking}
                                         className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg font-semibold text-sm transition-colors"
                                     >
-                                        {submitting ? "Submitting…" : "Lock In Bids"}
+                                        {myAcked ? "Waiting for others…" : acking ? "…" : "OK, Next Round"}
                                     </button>
-                                    {submitError && (
-                                        <span className="text-red-400 text-sm">{submitError}</span>
-                                    )}
-                                </>
-                            )
-                        )}
-
-                        {/* Who has submitted */}
-                        {isBidPhase && (
-                            <div className="flex items-center gap-3 text-xs ml-auto">
-                                {gameState.players.map((p) => {
-                                    const ci = playerColorMap[p.userId] ?? 0;
-                                    return (
-                                        <span key={p.userId} className="flex items-center gap-1">
-                                            <span className={`inline-block w-2 h-2 rounded-full ${SEAT_COLORS[ci].bg}`} />
-                                            <span className={p.hasSubmittedBids ? "text-emerald-400" : "text-gray-600"}>
-                                                {p.username}{p.hasSubmittedBids ? " ✓" : ""}
-                                            </span>
-                                        </span>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                </main>
-
-                {/* ── Player sidebar ───────────────────────────────────────── */}
-                <aside className="w-48 bg-gray-900 border-l border-gray-800 flex flex-col gap-2 p-3 overflow-y-auto shrink-0">
-                    <h2 className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 mb-1">
-                        Players
-                    </h2>
-                    {sortedPlayers.map((player) => {
-                        const isMe     = player.userId === userId;
-                        const ci       = playerColorMap[player.userId] ?? 0;
-                        const colors   = SEAT_COLORS[ci];
-                        return (
-                            <div
-                                key={player.userId}
-                                className={`rounded-lg p-2.5 flex flex-col gap-1.5 ${
-                                    isMe
-                                        ? `bg-gray-800 ring-1 ${colors.ring}`
-                                        : "bg-gray-800/50"
-                                } ${!player.isConnected ? "opacity-40" : ""}`}
-                            >
-                                <div className="flex items-center justify-between gap-1">
-                                    <div className="flex items-center gap-1.5 min-w-0">
-                                        <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${colors.bg}`} />
-                                        <span className="font-medium text-xs truncate">
-                                            {player.username}
-                                            {isMe && <span className="ml-1 text-gray-500">(you)</span>}
-                                        </span>
-                                    </div>
-                                    <span className="text-xs text-yellow-400 font-bold shrink-0">
-                                        {player.score}
-                                    </span>
-                                </div>
-
-                                {isBidPhase && (
-                                    <span className={`text-[11px] ${player.hasSubmittedBids ? "text-emerald-400" : "text-gray-600"}`}>
-                                        {player.hasSubmittedBids ? "✓ locked in" : "bidding…"}
-                                    </span>
                                 )}
-
-                                {isBidPhase && isMe && (
-                                    <div className="flex gap-2 text-xs pt-1 border-t border-gray-700/50">
-                                        <TokenBadge count={player.goldTokens}      color="text-yellow-400" symbol="G" label="Gold" />
-                                        <TokenBadge count={player.blackmailTokens} color="text-purple-400" symbol="B" label="Blackmail" />
-                                        <TokenBadge count={player.forceTokens}     color="text-red-400"    symbol="F" label="Force" />
+                                {gameState.phase === "ROUND_OVER" && (
+                                    <div className="flex items-center gap-3 text-xs ml-auto">
+                                        {gameState.players.filter(p => p.isConnected).map((p) => {
+                                            const acked = (gameState.resultsAckUserIds ?? []).includes(p.userId);
+                                            const ci    = playerColorMap[p.userId] ?? 0;
+                                            return (
+                                                <span key={p.userId} className="flex items-center gap-1">
+                                                    <span className={`inline-block w-2 h-2 rounded-full ${SEAT_COLORS[ci].bg}`} />
+                                                    <span className={acked ? "text-emerald-400" : "text-gray-600"}>
+                                                        {p.username}{acked ? " ✓" : "…"}
+                                                    </span>
+                                                </span>
+                                            );
+                                        })}
                                     </div>
                                 )}
-
-                                {!player.isConnected && (
-                                    <span className="text-[11px] text-gray-600">disconnected</span>
-                                )}
                             </div>
-                        );
-                    })}
-                </aside>
-            </div>
-
-            {/* ── Game Board Dialog ────────────────────────────────────────────── */}
-            {showBoard && (
-                <BoardDialog
-                    gameState={gameState}
-                    playerColorMap={playerColorMap}
-                    onClose={() => setShowBoard(false)}
-                />
-            )}
-
-            {/* ── Round Results Dialog ─────────────────────────────────────────── */}
-            {showResults && gameState.lastRoundResults && (
-                <ResultsDialog
-                    results={gameState.lastRoundResults}
-                    gameState={gameState}
-                    playerColorMap={playerColorMap}
-                    onClose={() => setShowResults(false)}
-                />
-            )}
-        </div>
-    );
-}
-
-// ── Board Dialog ───────────────────────────────────────────────────────────────
-
-function BoardDialog({
-    gameState,
-    playerColorMap,
-    onClose,
-}: {
-    gameState: GameState;
-    playerColorMap: Record<string, number>;
-    onClose: () => void;
-}) {
-    return (
-        <div
-            className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
-            onClick={onClose}
-        >
-            <div
-                className="bg-gray-950 border border-gray-800 rounded-2xl p-5 max-w-3xl w-full"
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-bold">City Board</h2>
-                    <button onClick={onClose} className="text-gray-500 hover:text-white text-xl leading-none">✕</button>
-                </div>
-                {!gameState.boardLocations ? (
-                    <p className="text-yellow-400 text-sm">Board data unavailable — start a new game.</p>
-                ) : (
-                    <CityBoard locations={gameState.boardLocations} playerColorMap={playerColorMap} />
-                )}
-            </div>
-        </div>
-    );
-}
-
-// ── Results Dialog ─────────────────────────────────────────────────────────────
-// Shows what everyone won last round.
-
-function ResultsDialog({
-    results,
-    gameState,
-    playerColorMap,
-    onClose,
-}: {
-    results: BlockResult[];
-    gameState: GameState;
-    playerColorMap: Record<string, number>;
-    onClose: () => void;
-}) {
-    const winResults = results.filter((r) => r.winnerUserId !== null);
-
-    return (
-        <div
-            className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-            onClick={onClose}
-        >
-            <div
-                className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-2xl w-full max-h-[85vh] overflow-y-auto"
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="flex items-center justify-between mb-5">
-                    <h2 className="text-lg font-bold">Round {gameState.roundNumber} Results</h2>
-                    <button onClick={onClose} className="text-gray-500 hover:text-white text-xl leading-none">✕</button>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                    {winResults.map((r) => {
-                        const meta  = BID_SPACE_META[r.blockId];
-                        const ci    = r.winnerUserId ? (playerColorMap[r.winnerUserId] ?? 0) : 0;
-                        const parts: string[] = [];
-                        if (r.support)   parts.push(`${r.support} support`);
-                        if (r.gold)      parts.push(`${r.gold} gold`);
-                        if (r.blackmail) parts.push(`${r.blackmail} blackmail`);
-                        if (r.force)     parts.push(`${r.force} force`);
-                        if (r.influenceLocationId) parts.push(`→ ${r.influenceLocationId.replace("_", " ")}`);
-                        if (r.special)   parts.push(r.special === "spy" ? "replace a cube" : "swap two cubes");
-
-                        return (
-                            <div key={r.blockId} className="flex items-center gap-3 bg-gray-800 rounded-lg px-3 py-2">
-                                <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${SEAT_COLORS[ci].bg}`} />
-                                <span className="font-semibold text-sm w-24 shrink-0">
-                                    {r.blockId.charAt(0).toUpperCase() + r.blockId.slice(1).replace("_", " ")}
-                                </span>
-                                <span className="text-sm text-gray-300 shrink-0">
-                                    {r.winnerUsername}
-                                </span>
-                                <span className="text-xs text-gray-500 ml-auto text-right">
-                                    {parts.join(" · ")}
-                                </span>
-                            </div>
-                        );
-                    })}
-
-                    {results.filter((r) => !r.winnerUserId).length > 0 && (
-                        <div className="mt-2 text-xs text-gray-600">
-                            Contested (tied):{" "}
-                            {results
-                                .filter((r) => !r.winnerUserId && r.bids.length > 0)
-                                .map((r) => r.blockId)
-                                .join(", ") || "none"}
                         </div>
-                    )}
-                </div>
+                    </Panel>
+
+                    {/* ── Separator: main ↔ sidebar ────────────────────────────── */}
+                    <Separator className="relative w-1 bg-gray-800 hover:bg-indigo-500 transition-colors cursor-col-resize">
+                        {/* Toggle button — on the main-content side (left of handle = left of sidebar) */}
+                        <button
+                            onClick={toggleSidebar}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            className="absolute top-1/2 -translate-y-1/2 -left-3 z-10 w-6 h-6 bg-gray-700 hover:bg-indigo-600 rounded-full flex items-center justify-center text-gray-300 hover:text-white transition-colors shadow-lg border border-gray-600 cursor-pointer"
+                            title={sidebarOpen ? "Collapse players" : "Expand players"}
+                        >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                {sidebarOpen
+                                    ? <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                    : <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                                }
+                            </svg>
+                        </button>
+                    </Separator>
+
+                    {/* ── Right: Player sidebar panel ──────────────────────────── */}
+                    <Panel
+                        id="sidebar"
+                        panelRef={sidebarPanelRef}
+                        collapsible
+                        defaultSize="15%"
+                        minSize="12%"
+                        maxSize="30%"
+                        onResize={(size) => setSidebarOpen(size.asPercentage > 0)}
+                        className="bg-gray-900 overflow-y-auto"
+                    >
+                        <div className="flex flex-col gap-2 p-3">
+                            <h2 className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 mb-1">
+                                Players
+                            </h2>
+                            {sortedPlayers.map((player) => {
+                                const isMe     = player.userId === userId;
+                                const ci       = playerColorMap[player.userId] ?? 0;
+                                const colors   = SEAT_COLORS[ci];
+                                return (
+                                    <div
+                                        key={player.userId}
+                                        className={`rounded-lg p-2.5 flex flex-col gap-1.5 ${
+                                            isMe
+                                                ? `bg-gray-800 ring-1 ${colors.ring}`
+                                                : "bg-gray-800/50"
+                                        } ${!player.isConnected ? "opacity-40" : ""}`}
+                                    >
+                                        <div className="flex items-center justify-between gap-1">
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${colors.bg}`} />
+                                                <span className="font-medium text-xs truncate">
+                                                    {player.username}
+                                                    {isMe && <span className="ml-1 text-gray-500">(you)</span>}
+                                                </span>
+                                            </div>
+                                            <span className="text-xs text-yellow-400 font-bold shrink-0">
+                                                {player.score}
+                                            </span>
+                                        </div>
+
+                                        {isBidPhase && (
+                                            <span className={`text-[11px] ${player.hasSubmittedBids ? "text-emerald-400" : "text-gray-600"}`}>
+                                                {player.hasSubmittedBids ? "✓ locked in" : "bidding…"}
+                                            </span>
+                                        )}
+
+                                        {isBidPhase && isMe && (
+                                            <div className="flex gap-2 text-xs pt-1 border-t border-gray-700/50">
+                                                <TokenBadge count={player.goldTokens}      color="text-yellow-400" symbol="G" label="Gold" />
+                                                <TokenBadge count={player.blackmailTokens} color="text-purple-400" symbol="B" label="Blackmail" />
+                                                <TokenBadge count={player.forceTokens}     color="text-red-400"    symbol="F" label="Force" />
+                                            </div>
+                                        )}
+
+                                        {/* Special action indicator */}
+                                        {gameState.phase === "SPECIAL_ACTIONS" &&
+                                            currentSpecialAction?.userId === player.userId && (
+                                            <span className="text-[11px] text-amber-400 animate-pulse">
+                                                {currentSpecialAction.type === "spy" ? "🕵️ spy action…" : "⚗️ apothecary action…"}
+                                            </span>
+                                        )}
+
+                                        {!player.isConnected && (
+                                            <span className="text-[11px] text-gray-600">disconnected</span>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </Panel>
+
+                </Group>
             </div>
+
         </div>
     );
 }
@@ -538,16 +700,18 @@ function ResultsDialog({
 
 function PhaseBadge({ phase }: { phase: GameState["phase"] }) {
     const styles: Record<GameState["phase"], string> = {
-        BID_PHASE:  "bg-indigo-800/60 text-indigo-200",
-        RESOLVING:  "bg-yellow-700/60 text-yellow-100",
-        ROUND_OVER: "bg-gray-700 text-gray-200",
-        GAME_OVER:  "bg-red-800/60 text-red-100",
+        BID_PHASE:       "bg-indigo-800/60 text-indigo-200",
+        RESOLVING:       "bg-yellow-700/60 text-yellow-100",
+        SPECIAL_ACTIONS: "bg-amber-700/60 text-amber-100",
+        ROUND_OVER:      "bg-gray-700 text-gray-200",
+        GAME_OVER:       "bg-red-800/60 text-red-100",
     };
     const labels: Record<GameState["phase"], string> = {
-        BID_PHASE:  "Bidding",
-        RESOLVING:  "Resolving",
-        ROUND_OVER: "Round Over",
-        GAME_OVER:  "Game Over",
+        BID_PHASE:       "Bidding",
+        RESOLVING:       "Resolving",
+        SPECIAL_ACTIONS: "Special Actions",
+        ROUND_OVER:      "Round Over",
+        GAME_OVER:       "Game Over",
     };
     return (
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${styles[phase]}`}>
@@ -566,37 +730,6 @@ function BudgetPill({ value, color, symbol, label }: {
         >
             {symbol}:{value}
         </span>
-    );
-}
-
-function BidControl({
-    value, canInc, canDec, onInc, onDec, color, symbol, disabled,
-}: {
-    value: number; canInc: boolean; canDec: boolean;
-    onInc: () => void; onDec: () => void;
-    color: string; symbol: string;
-    disabled?: boolean;
-}) {
-    if (disabled) return null;
-    return (
-        <div className={`flex items-center gap-0.5 ${color}`}>
-            <button
-                onClick={onDec}
-                disabled={!canDec}
-                className="w-4 h-4 flex items-center justify-center rounded bg-black/30 hover:bg-black/50 disabled:opacity-20 disabled:cursor-not-allowed text-xs font-bold leading-none select-none"
-            >
-                −
-            </button>
-            <span className="w-4 text-center text-xs font-bold">{value}</span>
-            <button
-                onClick={onInc}
-                disabled={!canInc}
-                className="w-4 h-4 flex items-center justify-center rounded bg-black/30 hover:bg-black/50 disabled:opacity-20 disabled:cursor-not-allowed text-xs font-bold leading-none select-none"
-            >
-                +
-            </button>
-            <span className="text-[10px] ml-0.5 opacity-50">{symbol}</span>
-        </div>
     );
 }
 

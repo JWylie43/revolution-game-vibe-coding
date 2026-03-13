@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import api from "../services/api";
 import CityBoard from "../components/CityBoard.js";
+import BidBoardNew from "../components/BidBoardNew.js";
 
 
 const COLORS = ["red", "blue", "green", "gold", "purple", "orange", "silver", "black", "teal"];
@@ -29,6 +30,7 @@ export default function HomePage() {
     const { user, logout } = useAuthStore();
     const navigate = useNavigate();
     const [showBoard, setShowBoard] = useState(false);
+    const [showBidBoard, setShowBidBoard] = useState(false);
 
     const [activeRoom, setActiveRoom] = useState(() => localStorage.getItem("activeRoom"));
     const [lobbies, setLobbies] = useState<LobbyEntry[]>([]);
@@ -76,6 +78,12 @@ export default function HomePage() {
                             className="text-sm text-gray-400 hover:text-white transition-colors"
                         >
                             View Board
+                        </button>
+                        <button
+                            onClick={() => setShowBidBoard(true)}
+                            className="text-sm text-gray-400 hover:text-white transition-colors"
+                        >
+                            Bid Reference
                         </button>
                         <button
                             onClick={logout}
@@ -218,8 +226,33 @@ export default function HomePage() {
                                 ✕
                             </button>
                         </div>
-
                         <CityBoard />
+                    </div>
+                </div>
+            )}
+
+            {showBidBoard && (
+                <div
+                    className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+                    onClick={() => setShowBidBoard(false)}
+                >
+                    <div
+                        className="bg-gray-950 border border-gray-800 rounded-2xl p-5 max-w-4xl w-full"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between mb-4">
+                            <div>
+                                <h2 className="text-lg font-bold">Bid Board Reference</h2>
+                                <p className="text-xs text-gray-500 mt-0.5">Read-only — shows all bid spaces, rewards, and restrictions</p>
+                            </div>
+                            <button
+                                onClick={() => setShowBidBoard(false)}
+                                className="text-gray-500 hover:text-white text-xl leading-none"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <BidBoardNew />
                     </div>
                 </div>
             )}

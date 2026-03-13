@@ -147,9 +147,6 @@ export const BOARD_LOCATION_MAP: Record<string, BoardLocation> = Object.fromEntr
     BOARD_LOCATIONS.map((l) => [l.id, l])
 );
 
-// Total rounds per game (standard Revolution)
-export const TOTAL_ROUNDS = 5;
-
 // Starting token allocation at the beginning of each round (base, before bonuses)
 export const STARTING_TOKENS = {
     gold: 3,
