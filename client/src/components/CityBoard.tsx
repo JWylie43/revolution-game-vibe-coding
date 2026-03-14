@@ -27,6 +27,12 @@ interface Props {
     onSlotClick?: (locationId: string, slotIndex: number, slot: BoardSlot | null) => void;
     // Slots to highlight with a selection ring (used during special actions).
     selectedSlots?: Array<{ locationId: string; slotIndex: number }>;
+    // End-game: draw each player's score token on the score track.
+    playerScores?: Record<string, number>;
+    // End-game: winning userId per location, or null for a tie.
+    locationWinners?: Record<string, string | null>;
+    // End-game: username lookup for winner badges.
+    playerUsernames?: Record<string, string>;
 }
 
 // Must match SEAT_COLORS in GameView.tsx
@@ -871,13 +877,138 @@ function drawPlaza(ctx: CanvasRenderingContext2D) {
     tree(ctx, px + pw - 20,  py + ph * 0.78, 0.7);
 }
 
+// ── End-game helpers ───────────────────────────────────────────────────────────
+
+/** Returns the (x, y) centre of a score-track cell for a given score value (1–99). */
+function scoreToXY(score: number): [number, number] {
+    const innerX = TW, innerY = TW;
+    const innerW = CW - TW * 2, innerH = CH - TW * 2;
+    const perimeter = 2 * (innerW + innerH);
+    const spacing = perimeter / 100;
+
+    const s = Math.min(99, Math.max(1, score));
+    const dist = (s - 1) * spacing;
+
+    if (dist <= innerW)                   return [innerX + dist + spacing / 2, TW / 2];
+    if (dist <= innerW + innerH)          return [CW - TW / 2, innerY + (dist - innerW)];
+    if (dist <= innerW * 2 + innerH)      return [CW - innerX - (dist - innerW - innerH), CH - TW / 2];
+    return [TW / 2, CH - innerY - (dist - innerW * 2 - innerH)];
+}
+
+/** Draws a coloured token for every player on the score track. */
+function drawPlayerScoreTokens(
+    ctx: CanvasRenderingContext2D,
+    playerScores: Record<string, number>,
+    playerColorMap: Record<string, number>,
+) {
+    // Group players sharing the same (clamped) score so we can offset them
+    const groups: Record<number, string[]> = {};
+    for (const [userId, raw] of Object.entries(playerScores)) {
+        const s = Math.min(99, Math.max(1, raw));
+        (groups[s] ??= []).push(userId);
+    }
+
+    const R = 10;
+    for (const [scoreStr, userIds] of Object.entries(groups)) {
+        const [bx, by] = scoreToXY(Number(scoreStr));
+        for (let i = 0; i < userIds.length; i++) {
+            const colorIdx = playerColorMap[userIds[i]] ?? 0;
+            const color = SEAT_HEX[colorIdx % SEAT_HEX.length];
+            // Stagger overlapping tokens diagonally by a small amount
+            const off = (i - (userIds.length - 1) / 2) * 3;
+
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 8;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(bx + off, by + off, R, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowColor = "transparent";
+            ctx.shadowBlur = 0;
+
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    }
+}
+
+/** Draws a coloured glow border + badge on each location for end-game majority results. */
+function drawLocationWinnerHighlights(
+    ctx: CanvasRenderingContext2D,
+    locationWinners: Record<string, string | null>,
+    playerColorMap: Record<string, number>,
+    playerUsernames: Record<string, string>,
+) {
+    for (const [locId, winnerId] of Object.entries(locationWinners)) {
+        const rect = L[locId as keyof typeof L];
+        if (!rect) continue;
+        const { x, y, w, h } = rect;
+
+        if (winnerId !== null) {
+            // ── Winner: coloured glow border ───────────────────────────────────
+            const colorIdx = playerColorMap[winnerId] ?? 0;
+            const color = SEAT_HEX[colorIdx % SEAT_HEX.length];
+
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 16;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            rrect(ctx, x, y, w, h, 5);
+            ctx.stroke();
+            ctx.shadowColor = "transparent";
+            ctx.shadowBlur = 0;
+
+            // ── Small badge in bottom-right corner ─────────────────────────────
+            const name = (playerUsernames[winnerId] ?? "").slice(0, 8) || "WINS";
+            ctx.font = "bold 9px system-ui, sans-serif";
+            const textW = ctx.measureText(`♔ ${name}`).width;
+            const bw = textW + 12, bh = 18;
+            const bx = x + w - 4 - bw, by = y + h - 4 - bh;
+
+            ctx.fillStyle = color;
+            rrect(ctx, bx, by, bw, bh, 4);
+            ctx.fill();
+
+            ctx.fillStyle = "white";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(`♔ ${name}`, bx + 6, by + bh / 2);
+        } else {
+            // ── Tied: grey dashed border ───────────────────────────────────────
+            ctx.save();
+            ctx.setLineDash([5, 4]);
+            ctx.strokeStyle = "rgba(150,150,150,0.55)";
+            ctx.lineWidth = 2;
+            rrect(ctx, x, y, w, h, 5);
+            ctx.stroke();
+            ctx.restore();
+
+            // "TIED" badge
+            const bw = 38, bh = 16;
+            const bx = x + w - 4 - bw, by = y + h - 4 - bh;
+            ctx.fillStyle = "rgba(70,70,70,0.85)";
+            rrect(ctx, bx, by, bw, bh, 4);
+            ctx.fill();
+            ctx.fillStyle = "#9ca3af";
+            ctx.font = "bold 8px system-ui, sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("TIED", bx + bw / 2, by + bh / 2);
+        }
+    }
+}
+
 // ── Main draw function ─────────────────────────────────────────────────────────
 
 function drawAll(
     ctx: CanvasRenderingContext2D,
     locations: BoardLocationData[] | undefined,
     playerColorMap: Record<string, number>,
-    selectedSlotKeys: Set<string>
+    selectedSlotKeys: Set<string>,
+    playerScores: Record<string, number>,
+    locationWinners: Record<string, string | null>,
+    playerUsernames: Record<string, string>,
 ) {
     ctx.clearRect(0, 0, CW, CH);
 
@@ -890,6 +1021,11 @@ function drawAll(
     drawFortress(ctx, L.fortress);
     drawMarket(ctx, L.market);
     drawHarbor(ctx, L.harbor);
+
+    // End-game: winner highlights sit above location artwork, below influence slots
+    if (Object.keys(locationWinners).length > 0) {
+        drawLocationWinnerHighlights(ctx, locationWinners, playerColorMap, playerUsernames);
+    }
 
     // Build live slot lookup
     const slotsByLoc: Record<string, BoardSlot[]> = {};
@@ -906,6 +1042,11 @@ function drawAll(
             drawSlot(ctx, cx2, cy2, liveSlots?.[i], playerColorMap, isSelected);
         }
     }
+
+    // End-game: score tokens sit on top of the track numbers
+    if (Object.keys(playerScores).length > 0) {
+        drawPlayerScoreTokens(ctx, playerScores, playerColorMap);
+    }
 }
 
 // ── React component ────────────────────────────────────────────────────────────
@@ -916,6 +1057,9 @@ export default function CityBoard({
     className = "",
     onSlotClick,
     selectedSlots = [],
+    playerScores = {},
+    locationWinners = {},
+    playerUsernames = {},
 }: Props) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -935,8 +1079,8 @@ export default function CityBoard({
         const selectedSlotKeys = new Set(
             selectedSlots.map((s) => `${s.locationId}:${s.slotIndex}`)
         );
-        drawAll(ctx, locations, playerColorMap, selectedSlotKeys);
-    }, [locations, playerColorMap, selectedSlots]);
+        drawAll(ctx, locations, playerColorMap, selectedSlotKeys, playerScores, locationWinners, playerUsernames);
+    }, [locations, playerColorMap, selectedSlots, playerScores, locationWinners, playerUsernames]);
 
     function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
         if (!onSlotClick) return;

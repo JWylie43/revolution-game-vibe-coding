@@ -215,6 +215,12 @@ export interface ClientToServerEvents {
 
     // In-game chat
     "chat:send": (data: { message: string }) => void;
+
+    // DEV ONLY — fills the board and jumps straight to GAME_OVER for testing.
+    // No-ops in production (server handler is not registered).
+    "dev:skipToEnd": (
+        callback: (res: { success: boolean; error?: string }) => void
+    ) => void;
 }
 
 // ── Inter-Server Events ────────────────────────────────────────────────────────

@@ -42,7 +42,9 @@
       "Bash(pnpm add react-resizable-panels --filter client)",
       "Bash(npx tsc --noEmit)",
       "Bash(grep '\"\"version\"\"')",
-      "Bash(node -e \"const m = require\\(''./client/node_modules/react-resizable-panels''\\); console.log\\(Object.keys\\(m\\)\\)\")"
+      "Bash(node -e \"const m = require\\(''./client/node_modules/react-resizable-panels''\\); console.log\\(Object.keys\\(m\\)\\)\")",
+      "Bash(pnpm add pixi.js --filter revolution-client)",
+      "Bash(node -e \"const p = require\\(''./node_modules/pixi.js/package.json''\\); console.log\\(p.version\\)\")"
     ]
   }
 }

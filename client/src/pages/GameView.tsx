@@ -46,6 +46,38 @@ export default function GameView({ gameState, userId }: Props) {
         return map;
     }, [gameState.players]);
 
+    // ── End-game derived data ──────────────────────────────────────────────────
+    const playerScoreMap = useMemo(() => {
+        const map: Record<string, number> = {};
+        for (const p of gameState.players) map[p.userId] = p.score;
+        return map;
+    }, [gameState.players]);
+
+    const playerUsernameMap = useMemo(() => {
+        const map: Record<string, string> = {};
+        for (const p of gameState.players) map[p.userId] = p.username;
+        return map;
+    }, [gameState.players]);
+
+    // Compute per-location majority winner (null = tied / nobody)
+    const locationWinners = useMemo<Record<string, string | null>>(() => {
+        if (gameState.phase !== "GAME_OVER" || !gameState.boardLocations) return {};
+        const result: Record<string, string | null> = {};
+        for (const loc of gameState.boardLocations) {
+            const counts: Record<string, number> = {};
+            for (const slot of loc.slots) {
+                if (slot.occupiedBy) counts[slot.occupiedBy] = (counts[slot.occupiedBy] ?? 0) + 1;
+            }
+            const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+            if (entries.length === 0 || (entries.length > 1 && entries[0][1] === entries[1][1])) {
+                result[loc.locationId] = null; // empty or tied
+            } else {
+                result[loc.locationId] = entries[0][0];
+            }
+        }
+        return result;
+    }, [gameState.phase, gameState.boardLocations]);
+
     // ── Bid state ──────────────────────────────────────────────────────────────
     const [bids, setBids] = useState<BidMap>(() => emptyBids(BID_SPACE_ORDER));
     const [submitting, setSubmitting] = useState(false);
@@ -305,6 +337,19 @@ export default function GameView({ gameState, userId }: Props) {
                         </div>
                     )}
 
+                    {/* DEV shortcut — only visible in local dev builds */}
+                    {import.meta.env.DEV && (
+                        <button
+                            onClick={() => socket.emit("dev:skipToEnd", (res) => {
+                                if (!res.success) console.error("dev:skipToEnd:", res.error);
+                            })}
+                            className="px-2 py-1 text-[10px] bg-red-900/50 hover:bg-red-800/70 text-red-400 hover:text-red-200 rounded border border-red-800/60 transition-colors"
+                            title="DEV: fill board and jump to end screen"
+                        >
+                            ⚡ End Game
+                        </button>
+                    )}
+
                     {/* Home */}
                     <button
                         onClick={() => { socket.emit("game:leave"); navigate("/"); }}
@@ -398,18 +443,6 @@ export default function GameView({ gameState, userId }: Props) {
                             {gameState.phase === "RESOLVING" && (
                                 <div className="mb-4 text-center text-yellow-400 font-semibold animate-pulse">
                                     Resolving bids…
-                                </div>
-                            )}
-                            {gameState.phase === "GAME_OVER" && (
-                                <div className="mb-4 text-center">
-                                    <p className="text-3xl font-bold text-yellow-400">Revolution is over!</p>
-                                    {gameState.winner && (
-                                        <p className="text-gray-300 mt-1">
-                                            Winner:{" "}
-                                            {gameState.players.find((p) => p.userId === gameState.winner)?.username
-                                                ?? gameState.winner}
-                                        </p>
-                                    )}
                                 </div>
                             )}
 
@@ -691,6 +724,68 @@ export default function GameView({ gameState, userId }: Props) {
 
                 </Group>
             </div>
+
+            {/* ── GAME OVER fullscreen overlay ─────────────────────────────── */}
+            {gameState.phase === "GAME_OVER" && gameState.boardLocations && (
+                <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
+
+                    {/* Header */}
+                    <div className="shrink-0 bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center gap-4 flex-wrap">
+                        <span className="text-2xl">🏆</span>
+                        <div>
+                            <h2 className="text-xl font-bold text-yellow-400">Revolution is Over!</h2>
+                            {gameState.winner && (
+                                <p className="text-sm text-gray-400">
+                                    Winner:{" "}
+                                    <span className="font-semibold text-white">
+                                        {gameState.players.find((p) => p.userId === gameState.winner)?.username ?? gameState.winner}
+                                    </span>
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Player score summary */}
+                        <div className="flex items-center gap-4 ml-4 flex-wrap">
+                            {sortedPlayers.map((p) => {
+                                const ci = playerColorMap[p.userId] ?? 0;
+                                const isWinner = p.userId === gameState.winner;
+                                return (
+                                    <div key={p.userId} className="flex items-center gap-1.5">
+                                        <span className={`w-3 h-3 rounded-full inline-block ${SEAT_COLORS[ci].bg}`} />
+                                        <span className={`text-sm ${isWinner ? "text-white font-semibold" : "text-gray-400"}`}>
+                                            {p.username}
+                                        </span>
+                                        <span className={`text-sm font-bold ${isWinner ? "text-yellow-400" : "text-gray-500"}`}>
+                                            {p.score}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <button
+                            onClick={() => { navigate("/"); }}
+                            className="ml-auto px-4 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-gray-300 hover:text-white transition-colors"
+                        >
+                            Leave
+                        </button>
+                    </div>
+
+                    {/* Board — fills remaining height, centred, maintains aspect ratio */}
+                    <div className="flex-1 min-h-0 flex items-center justify-center p-4">
+                        <div style={{ height: "100%", aspectRatio: "780 / 720", maxWidth: "100%" }}>
+                            <CityBoard
+                                locations={gameState.boardLocations}
+                                playerColorMap={playerColorMap}
+                                playerScores={playerScoreMap}
+                                locationWinners={locationWinners}
+                                playerUsernames={playerUsernameMap}
+                            />
+                        </div>
+                    </div>
+
+                </div>
+            )}
 
         </div>
     );

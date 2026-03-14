@@ -402,20 +402,81 @@ export function handleGameEvents(socket: AppSocket, io: AppServer): void {
 
     // ── game:leave ─────────────────────────────────────────────────────────────
     // Player explicitly leaves the game (navigated away within the SPA).
-    // Starts the same 60s reconnect timer as a socket disconnect.
-    socket.on("game:leave", () => {
+    // Starts the same 60s reconnect timer as a socket disconnect,
+    // UNLESS the game is already over — no point reconnecting to a finished game.
+    socket.on("game:leave", async () => {
         const { code, userId, username } = socket.data;
         if (!code || socket.data.isSpectator) return;
 
         // Clear their "current game" tracking — they intentionally left
         redis.del(keys.playerCurrent(userId));
 
-        // Leave the room and start the timer
+        // Leave the room
         socket.leave(`game:${code}`);
         socket.data.code = undefined;
 
+        // Don't start a rejoin timer when the game is already finished
+        const state = await getGameState<GameState>(code);
+        if (state?.phase === "GAME_OVER") return;
+
         startDisconnectTimer(code, userId, username, io);
     });
+
+    // ── DEV ONLY: dev:skipToEnd ────────────────────────────────────────────────
+    // Fills every empty board slot round-robin among players, awards majority
+    // support, then jumps to GAME_OVER. Only registered outside production.
+    if (process.env.NODE_ENV !== "production") {
+        socket.on("dev:skipToEnd", async (callback) => {
+            const { code } = socket.data;
+            if (!code) return callback({ success: false, error: "Not in a game" });
+
+            const state = await getGameState<GameState>(code);
+            if (!state) return callback({ success: false, error: "No game state found" });
+            if (state.phase === "GAME_OVER") return callback({ success: false, error: "Game already over" });
+
+            // Deep-clone so we can mutate freely
+            const s: GameState = JSON.parse(JSON.stringify(state));
+
+            // Fill every empty slot round-robin across all players
+            let pIdx = 0;
+            for (const loc of s.boardLocations) {
+                for (const slot of loc.slots) {
+                    if (!slot.occupiedBy) {
+                        const p = s.players[pIdx % s.players.length];
+                        slot.occupiedBy = p.userId;
+                        slot.occupiedByUsername = p.username;
+                        pIdx++;
+                    }
+                }
+            }
+
+            // Award end-game majority support per location
+            for (const loc of s.boardLocations) {
+                const counts: Record<string, number> = {};
+                for (const slot of loc.slots) {
+                    if (slot.occupiedBy) counts[slot.occupiedBy] = (counts[slot.occupiedBy] ?? 0) + 1;
+                }
+                const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+                if (sorted.length > 0 && (sorted.length === 1 || sorted[0][1] > sorted[1][1])) {
+                    const winner = s.players.find((p) => p.userId === sorted[0][0]);
+                    if (winner) winner.score += loc.endGameSupport;
+                }
+            }
+
+            // Determine overall winner
+            const topPlayer = s.players.reduce((a, b) => (a.score > b.score ? a : b));
+            const finalState: GameState = {
+                ...s,
+                phase: "GAME_OVER",
+                winner: topPlayer.userId,
+                pendingSpecialActions: [],
+            };
+
+            await setGameState(code, finalState);
+            io.to(`game:${code}`).emit("game:stateUpdate", finalState);
+            callback({ success: true });
+        });
+    }
 }
 
 // ── Resolve Round ──────────────────────────────────────────────────────────────

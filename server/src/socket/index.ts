@@ -93,6 +93,10 @@ export function initializeSocket(httpServer: HttpServer): void {
             const meta = await getSessionMeta(code);
 
             if (meta?.status === "in_progress" && !isSpectator) {
+                // Don't start a rejoin timer if the game is already finished
+                const gameState = await getGameState(code);
+                if (gameState?.phase === "GAME_OVER") return;
+
                 // Disconnected from an active game — give them 60s to reconnect
                 startDisconnectTimer(code, userId, username, io);
                 io.to(`game:${code}`).emit("notification:playerLeft", { username });
