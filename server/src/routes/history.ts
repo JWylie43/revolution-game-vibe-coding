@@ -44,7 +44,7 @@ router.get("/", async (req, res) => {
         });
 
         const games = all
-            .filter((g) => {
+            .filter((g: typeof all[number]) => {
                 const fs = g.finalState as { players?: Array<{ userId: string }> };
                 return fs.players?.some((p) => p.userId === userId) ?? false;
             })

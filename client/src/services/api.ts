@@ -23,7 +23,10 @@ const api = axios.create({
     // All requests will be prefixed with /api.
     // In development, Vite's proxy forwards /api/* to localhost:3001.
     // In production, this would be your server's URL.
-    baseURL: "/api",
+    // In dev, VITE_SERVER_URL is unset so this falls back to "/api",
+    // which Vite's proxy forwards to localhost:3001.
+    // In production, VITE_SERVER_URL is set to the Railway URL (e.g. https://your-app.railway.app).
+    baseURL: `${import.meta.env.VITE_SERVER_URL ?? ""}/api`,
 
     // Default headers for every request
     headers: {

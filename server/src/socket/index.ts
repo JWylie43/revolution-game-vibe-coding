@@ -35,7 +35,7 @@ import type {
     GameState,
 } from "./types.js";
 import { handleLobbyEvents, cancelCountdown, closeLobby } from "./lobbyHandler.js";
-import { handleGameEvents, startDisconnectTimer, cancelDisconnectTimer } from "./gameHandler.js";
+import { handleGameEvents, startDisconnectTimer } from "./gameHandler.js";
 
 export let io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 

@@ -45,6 +45,9 @@
 
     // "node23" = include type definitions for Node.js built-in APIs.
     // This tells TypeScript that things like "process", "Buffer", "__dirname" exist.
+    // Compile to ES2020 so modern syntax like for...of on iterators works.
+    "target": "ES2020",
+
     "lib": ["ESNext"],
     "types": ["node"],
 

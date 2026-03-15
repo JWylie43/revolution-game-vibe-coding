@@ -1,0 +1,22 @@
+{
+  // Production build config — extends the dev tsconfig but overrides settings
+  // that are incompatible with emitting JavaScript files.
+  //
+  // Why a separate file?
+  //   - "allowImportingTsExtensions: true" is only allowed when noEmit is true.
+  //   - "moduleResolution: bundler" is for bundlers (Vite/esbuild), not Node.js.
+  //   For actual compilation to dist/, we need Node16 module resolution and emit on.
+  //
+  // Usage: tsc -p tsconfig.build.json
+
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Turn off the dev-only settings
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+
+    // Use Node16 module resolution — correct for Node.js ESM (not bundlers)
+    "module": "Node16",
+    "moduleResolution": "Node16"
+  }
+}
