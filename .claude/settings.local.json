@@ -44,7 +44,11 @@
       "Bash(grep '\"\"version\"\"')",
       "Bash(node -e \"const m = require\\(''./client/node_modules/react-resizable-panels''\\); console.log\\(Object.keys\\(m\\)\\)\")",
       "Bash(pnpm add pixi.js --filter revolution-client)",
-      "Bash(node -e \"const p = require\\(''./node_modules/pixi.js/package.json''\\); console.log\\(p.version\\)\")"
+      "Bash(node -e \"const p = require\\(''./node_modules/pixi.js/package.json''\\); console.log\\(p.version\\)\")",
+      "Bash(npx prisma db push)",
+      "Bash(npx tsc --noEmit -p server/tsconfig.json)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(npx prisma db push --skip-generate)"
     ]
   }
 }

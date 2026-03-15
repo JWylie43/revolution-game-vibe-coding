@@ -27,7 +27,7 @@ interface Props {
     onSlotClick?: (locationId: string, slotIndex: number, slot: BoardSlot | null) => void;
     // Slots to highlight with a selection ring (used during special actions).
     selectedSlots?: Array<{ locationId: string; slotIndex: number }>;
-    // End-game: draw each player's score token on the score track.
+    // Score tokens on the track — shown at all times during the game.
     playerScores?: Record<string, number>;
     // End-game: winning userId per location, or null for a tie.
     locationWinners?: Record<string, string | null>;
@@ -879,20 +879,28 @@ function drawPlaza(ctx: CanvasRenderingContext2D) {
 
 // ── End-game helpers ───────────────────────────────────────────────────────────
 
-/** Returns the (x, y) centre of a score-track cell for a given score value (1–99). */
+/**
+ * Returns the (x, y) centre of a score-track cell for a given score value.
+ * Wraps every 100 points — score 0/100/200/… lands at the start corner,
+ * score 1/101/201/… lands on the first cell, etc.
+ */
 function scoreToXY(score: number): [number, number] {
     const innerX = TW, innerY = TW;
     const innerW = CW - TW * 2, innerH = CH - TW * 2;
     const perimeter = 2 * (innerW + innerH);
     const spacing = perimeter / 100;
 
-    const s = Math.min(99, Math.max(1, score));
-    const dist = (s - 1) * spacing;
+    // Wrap to 0-99; 0 (and every multiple of 100) sits at the start corner
+    const s = Math.max(0, score) % 100;
+    if (s === 0) return [TW / 2, TW / 2];
 
-    if (dist <= innerW)                   return [innerX + dist + spacing / 2, TW / 2];
-    if (dist <= innerW + innerH)          return [CW - TW / 2, innerY + (dist - innerW)];
-    if (dist <= innerW * 2 + innerH)      return [CW - innerX - (dist - innerW - innerH), CH - TW / 2];
-    return [TW / 2, CH - innerY - (dist - innerW * 2 - innerH)];
+    // Use cell-centre distance to avoid off-by-half errors at edge transitions
+    const center = (s - 0.5) * spacing;
+
+    if (center <= innerW)                   return [innerX + center, TW / 2];
+    if (center <= innerW + innerH)          return [CW - TW / 2, innerY + (center - innerW)];
+    if (center <= innerW * 2 + innerH)      return [CW - innerX - (center - innerW - innerH), CH - TW / 2];
+    return [TW / 2, CH - innerY - (center - innerW * 2 - innerH)];
 }
 
 /** Draws a coloured token for every player on the score track. */
@@ -901,21 +909,25 @@ function drawPlayerScoreTokens(
     playerScores: Record<string, number>,
     playerColorMap: Record<string, number>,
 ) {
-    // Group players sharing the same (clamped) score so we can offset them
-    const groups: Record<number, string[]> = {};
+    // Group players by their wrapped position (score % 100) so overlapping tokens
+    // can be staggered. Each entry tracks the lap number separately for the badge.
+    const groups: Record<number, Array<{ userId: string; lap: number }>> = {};
     for (const [userId, raw] of Object.entries(playerScores)) {
-        const s = Math.min(99, Math.max(1, raw));
-        (groups[s] ??= []).push(userId);
+        const clamped = Math.max(0, raw);
+        const wrapped = clamped % 100;
+        const lap     = Math.floor(clamped / 100);
+        (groups[wrapped] ??= []).push({ userId, lap });
     }
 
     const R = 10;
-    for (const [scoreStr, userIds] of Object.entries(groups)) {
-        const [bx, by] = scoreToXY(Number(scoreStr));
-        for (let i = 0; i < userIds.length; i++) {
-            const colorIdx = playerColorMap[userIds[i]] ?? 0;
+    for (const [wrappedStr, players] of Object.entries(groups)) {
+        const [bx, by] = scoreToXY(Number(wrappedStr));
+        for (let i = 0; i < players.length; i++) {
+            const { userId, lap } = players[i];
+            const colorIdx = playerColorMap[userId] ?? 0;
             const color = SEAT_HEX[colorIdx % SEAT_HEX.length];
             // Stagger overlapping tokens diagonally by a small amount
-            const off = (i - (userIds.length - 1) / 2) * 3;
+            const off = (i - (players.length - 1) / 2) * 3;
 
             ctx.shadowColor = color;
             ctx.shadowBlur = 8;
@@ -929,6 +941,15 @@ function drawPlayerScoreTokens(
             ctx.strokeStyle = "white";
             ctx.lineWidth = 2;
             ctx.stroke();
+
+            // Show the lap counter (1, 2, …) inside the dot once a player has lapped
+            if (lap > 0) {
+                ctx.fillStyle = "white";
+                ctx.font = "bold 9px system-ui";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(String(lap), bx + off, by + off);
+            }
         }
     }
 }

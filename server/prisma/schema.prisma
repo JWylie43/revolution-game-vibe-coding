@@ -41,14 +41,20 @@ model User {
 //   board:   [{ blockId, blockName, controlledBy, pointValue }]
 //   winner:  userId of the winner
 //
+// roundHistory is an array of RoundSnapshot objects, one per completed round.
+// Each snapshot records bids, special actions, board state, and scores for that round.
+// Stored in Redis during the game; written here atomically when the game ends.
+// Nullable so that old records without history remain valid.
+//
 // To find all games a user played:
 //   SELECT * FROM completed_games WHERE final_state->'players' @> '[{"userId":"abc"}]'
 model CompletedGame {
-  id         String   @id @default(cuid())
-  code       String   @unique  // e.g. "blue1234"
-  playedAt   DateTime @default(now())
-  durationMs Int
-  finalState Json
+  id           String   @id @default(cuid())
+  code         String   @unique  // e.g. "blue1234"
+  playedAt     DateTime @default(now())
+  durationMs   Int
+  finalState   Json
+  roundHistory Json?    // RoundSnapshot[] — null for games completed before this feature
 
   @@map("completed_games")
 }

@@ -53,6 +53,36 @@ export interface InfluenceSlot {
     occupiedByUsername: string | null;
 }
 
+// A completed special action within the current round (for round history).
+// Populated as actions execute; cleared when the next round begins.
+export interface CompletedSpecialAction {
+    type: "spy" | "apothecary";
+    userId: string;
+    username: string;
+    skipped: boolean;
+    // Spy: which slot was targeted and who was displaced
+    spyTarget?: {
+        locationId: string;
+        slotIndex: number;
+        previousUserId: string;
+        previousUsername: string;
+    };
+    // Apothecary: which two slots were swapped (before the swap)
+    apothecarySwap?: {
+        slotA: { locationId: string; slotIndex: number; userId: string; username: string };
+        slotB: { locationId: string; slotIndex: number; userId: string; username: string };
+    };
+}
+
+// A snapshot of one completed round — stored in Redis and written to Postgres at game end.
+export interface RoundSnapshot {
+    roundNumber: number;
+    results: BlockResult[];                    // revealed bids + outcomes for every bid space
+    specialActions: CompletedSpecialAction[];  // spy/apothecary actions (or skips) this round
+    boardLocations: GameState["boardLocations"]; // board state AFTER all actions
+    playerScores: Array<{ userId: string; username: string; score: number }>;
+}
+
 // The full game state sent to clients.
 // Pending bids are NOT included — they're secret until the round resolves.
 export interface GameState {
@@ -89,6 +119,9 @@ export interface GameState {
         userId: string;
         username: string;
     }>;
+    // Special actions that have already executed this round (populated as they fire,
+    // cleared at the start of each new round). Used for round history snapshots.
+    completedSpecialActions?: CompletedSpecialAction[];
 }
 
 // ── Server → Client Events ─────────────────────────────────────────────────────
@@ -219,6 +252,17 @@ export interface ClientToServerEvents {
     // DEV ONLY — fills the board and jumps straight to GAME_OVER for testing.
     // No-ops in production (server handler is not registered).
     "dev:skipToEnd": (
+        callback: (res: { success: boolean; error?: string }) => void
+    ) => void;
+
+    // DEV ONLY — starts auto-play: bots submit random bids and advance every phase
+    // automatically at ~600ms intervals until GAME_OVER.
+    "dev:autoPlay": (
+        callback: (res: { success: boolean; error?: string }) => void
+    ) => void;
+
+    // DEV ONLY — stops a running auto-play loop.
+    "dev:stopAutoPlay": (
         callback: (res: { success: boolean; error?: string }) => void
     ) => void;
 }

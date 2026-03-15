@@ -22,6 +22,7 @@ import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import HomePage from "./pages/HomePage";
 import GameRoomPage from "./pages/GameRoomPage";
+import HistoryPage from "./pages/HistoryPage";
 
 // ── Protected Route Component ─────────────────────────────────────────────────
 // Wraps routes that require authentication.
@@ -101,6 +102,14 @@ export default function App() {
                     element={
                         <ProtectedRoute>
                             <HomePage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/history"
+                    element={
+                        <ProtectedRoute>
+                            <HistoryPage />
                         </ProtectedRoute>
                     }
                 />

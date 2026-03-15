@@ -4,11 +4,10 @@
 // Polls /api/lobby/list every 5 seconds to keep the table fresh.
 
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import api from "../services/api";
-import CityBoard from "../components/CityBoard.js";
-import BidBoardNew from "../components/BidBoardNew.js";
+import HowToPlayDialog from "../components/HowToPlayDialog";
 
 
 const COLORS = ["red", "blue", "green", "gold", "purple", "orange", "silver", "black", "teal"];
@@ -29,8 +28,7 @@ interface LobbyEntry {
 export default function HomePage() {
     const { user, logout } = useAuthStore();
     const navigate = useNavigate();
-    const [showBoard, setShowBoard] = useState(false);
-    const [showBidBoard, setShowBidBoard] = useState(false);
+    const [showHowTo, setShowHowTo] = useState(false);
 
     const [activeRoom, setActiveRoom] = useState(() => localStorage.getItem("activeRoom"));
     const [lobbies, setLobbies] = useState<LobbyEntry[]>([]);
@@ -67,24 +65,29 @@ export default function HomePage() {
             {/* ── Nav ─────────────────────────────────────────────────────────── */}
             <nav className="bg-gray-800 border-b border-gray-700 px-6 py-4">
                 <div className="max-w-4xl mx-auto flex items-center justify-between">
-                    <h1 className="text-xl font-bold">Revolution</h1>
+                    <button
+                        onClick={() => navigate("/")}
+                        className="text-xl font-bold hover:text-gray-300 transition-colors"
+                    >
+                        Revolution
+                    </button>
                     <div className="flex items-center gap-4">
                         <span className="text-gray-400">
                             Welcome,{" "}
                             <span className="text-white font-medium">{user?.username}</span>
                         </span>
                         <button
-                            onClick={() => setShowBoard(true)}
+                            onClick={() => setShowHowTo(true)}
                             className="text-sm text-gray-400 hover:text-white transition-colors"
                         >
-                            View Board
+                            How to Play
                         </button>
-                        <button
-                            onClick={() => setShowBidBoard(true)}
+                        <Link
+                            to="/history"
                             className="text-sm text-gray-400 hover:text-white transition-colors"
                         >
-                            Bid Reference
-                        </button>
+                            History
+                        </Link>
                         <button
                             onClick={logout}
                             className="text-sm text-gray-400 hover:text-white transition-colors"
@@ -208,54 +211,7 @@ export default function HomePage() {
                 </div>
             </main>
 
-            {showBoard && (
-                <div
-                    className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-                    onClick={() => setShowBoard(false)}
-                >
-                    <div
-                        className="bg-gray-950 border border-gray-800 rounded-2xl p-5 max-w-3xl w-full"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="flex items-center justify-between mb-5">
-                            <h2 className="text-lg font-bold">City Board</h2>
-                            <button
-                                onClick={() => setShowBoard(false)}
-                                className="text-gray-500 hover:text-white text-xl leading-none"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <CityBoard />
-                    </div>
-                </div>
-            )}
-
-            {showBidBoard && (
-                <div
-                    className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-                    onClick={() => setShowBidBoard(false)}
-                >
-                    <div
-                        className="bg-gray-950 border border-gray-800 rounded-2xl p-5 max-w-4xl w-full"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="flex items-center justify-between mb-4">
-                            <div>
-                                <h2 className="text-lg font-bold">Bid Board Reference</h2>
-                                <p className="text-xs text-gray-500 mt-0.5">Read-only — shows all bid spaces, rewards, and restrictions</p>
-                            </div>
-                            <button
-                                onClick={() => setShowBidBoard(false)}
-                                className="text-gray-500 hover:text-white text-xl leading-none"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <BidBoardNew />
-                    </div>
-                </div>
-            )}
+            {showHowTo && <HowToPlayDialog onClose={() => setShowHowTo(false)} />}
         </div>
     );
 }

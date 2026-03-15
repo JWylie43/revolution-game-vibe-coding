@@ -21,6 +21,7 @@ import { initializeSocket } from "./socket/index.js";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/user.js";
 import lobbyRoutes from "./routes/lobby.js";
+import historyRoutes from "./routes/history.js";
 
 // ── Create Express App ─────────────────────────────────────────────────────────
 const app = express();
@@ -50,6 +51,7 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/lobby", lobbyRoutes);
+app.use("/api/history", historyRoutes);
 
 // Health check endpoint — used by load balancers and monitoring tools
 // to verify the server is running. Returns 200 OK.

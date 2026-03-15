@@ -281,6 +281,7 @@ interface CardProps {
     bid:              { gold: number; blackmail: number; force: number };
     remaining:        { gold: number; blackmail: number; force: number };
     canBid:           boolean;
+    atSpaceLimit:     boolean;  // true when 6 spaces already have tokens and this space has none
     alreadySubmitted: boolean;
     lastResult?:      BidResult;
     phase:            string;
@@ -289,17 +290,22 @@ interface CardProps {
 }
 
 function SpaceCard({
-    space, bid, remaining, canBid, alreadySubmitted, lastResult, phase, playerOrder, onChangeBid,
+    space, bid, remaining, canBid, atSpaceLimit, alreadySubmitted, lastResult, phase, playerOrder, onChangeBid,
 }: CardProps) {
     const [showBidPopup, setShowBidPopup] = useState(false);
     const showCounts   = canBid || alreadySubmitted;
     const visibleTypes = Object.keys(space.acceptedTokens) as TokenType[];
     const { className: bgClass, style: bgStyle } = cardColors(space.noForce, space.noBlackmail);
+    // True if this space currently has no tokens allocated to it
+    const thisBidTotal = bid.gold + bid.blackmail + bid.force;
+
+    const spaceLocked = atSpaceLimit && thisBidTotal === 0;
 
     return (
         <div
-            className={`relative flex flex-col rounded-lg overflow-hidden select-none ${bgClass}`}
+            className={`relative flex flex-col rounded-lg overflow-hidden select-none ${bgClass} ${spaceLocked ? "opacity-40" : ""}`}
             style={{ minHeight: "9rem", ...bgStyle }}
+            title={spaceLocked ? "6 spaces already in use — remove tokens from another space first" : undefined}
         >
             {/* Watermark */}
             <div
@@ -351,7 +357,9 @@ function SpaceCard({
                         {visibleTypes.map(type => {
                             const count     = bid[type];
                             const exhausted = showCounts && !alreadySubmitted && remaining[type] <= 0 && count === 0;
-                            const clickable = canBid && !alreadySubmitted && (remaining[type] > 0 || count > 0);
+                            // Blocked when: at the 6-space limit and this space has no tokens yet
+                            const spaceLocked = atSpaceLimit && thisBidTotal === 0;
+                            const clickable = canBid && !alreadySubmitted && !spaceLocked && (remaining[type] > 0 || count > 0);
 
                             return (
                                 <div
@@ -562,8 +570,23 @@ export default function BidBoardNew({
     onChangeBid,
     className        = "",
 }: Props) {
+    // Count how many spaces currently have at least one token on them
+    const spacesUsed = Object.values(bids).filter(b => b.gold + b.blackmail + b.force > 0).length;
+    const atSpaceLimit = spacesUsed >= 6;
+
     return (
         <div className={`flex flex-col gap-1.5 ${className}`}>
+            {/* 6-space counter — only shown while actively bidding */}
+            {canBid && !alreadySubmitted && (
+                <div className={`flex items-center gap-2 text-xs px-0.5 ${atSpaceLimit ? "text-amber-400" : "text-gray-500"}`}>
+                    <span>
+                        Spaces used: <span className={`font-bold ${atSpaceLimit ? "text-amber-300" : "text-gray-300"}`}>{spacesUsed}</span> / 6
+                    </span>
+                    {atSpaceLimit && (
+                        <span className="text-amber-500">— remove tokens to open a different space</span>
+                    )}
+                </div>
+            )}
             <div className="grid grid-cols-4 gap-2">
                 {bidBoardDef.map(space => (
                     <SpaceCard
@@ -572,6 +595,7 @@ export default function BidBoardNew({
                         bid={bids[space.id] ?? { gold: 0, blackmail: 0, force: 0 }}
                         remaining={remaining}
                         canBid={canBid}
+                        atSpaceLimit={atSpaceLimit}
                         alreadySubmitted={alreadySubmitted}
                         lastResult={lastResults.find(r => r.blockId === space.id)}
                         phase={phase}

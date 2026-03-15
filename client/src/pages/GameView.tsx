@@ -10,6 +10,7 @@ import { useAuthStore } from "../store/authStore.js";
 import CityBoard from "../components/CityBoard.js";
 import type { BoardSlot } from "../components/CityBoard.js";
 import BidBoardNew, { BID_SPACE_ORDER, type BidMap, type TokenType } from "../components/BidBoardNew.js";
+import HowToPlayDialog from "../components/HowToPlayDialog.js";
 
 interface Props {
     gameState: GameState;
@@ -77,6 +78,21 @@ export default function GameView({ gameState, userId }: Props) {
         }
         return result;
     }, [gameState.phase, gameState.boardLocations]);
+
+    // ── Dev auto-play state ────────────────────────────────────────────────────
+    const [autoPlaying, setAutoPlaying] = useState(false);
+
+    // ── How-to-play dialog ────────────────────────────────────────────────────
+    const [showHowTo, setShowHowTo] = useState(false);
+
+    // When the game ends, stop the auto-play indicator and clear the "active room"
+    // localStorage key so the rejoin banner doesn't appear on the home screen.
+    useEffect(() => {
+        if (gameState.phase === "GAME_OVER") {
+            setAutoPlaying(false);
+            localStorage.removeItem("activeRoom");
+        }
+    }, [gameState.phase]);
 
     // ── Bid state ──────────────────────────────────────────────────────────────
     const [bids, setBids] = useState<BidMap>(() => emptyBids(BID_SPACE_ORDER));
@@ -166,6 +182,13 @@ export default function GameView({ gameState, userId }: Props) {
         if (delta > 0 && remaining[type] <= 0) return;
         setBids((prev) => {
             const cur = prev[spaceId] ?? { gold: 0, blackmail: 0, force: 0 };
+            // Enforce 6-space limit: can't add to a space that has no tokens if already at 6
+            if (delta > 0 && cur.gold === 0 && cur.blackmail === 0 && cur.force === 0) {
+                const spacesUsed = Object.values(prev).filter(
+                    (b) => b.gold + b.blackmail + b.force > 0
+                ).length;
+                if (spacesUsed >= 6) return prev;
+            }
             return { ...prev, [spaceId]: { ...cur, [type]: Math.max(0, cur[type] + delta) } };
         });
     }
@@ -321,7 +344,13 @@ export default function GameView({ gameState, userId }: Props) {
             {/* ── Header ──────────────────────────────────────────────────────── */}
             <header className="flex items-center justify-between px-5 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
                 <div className="flex items-center gap-3">
-                    <h1 className="font-bold text-base tracking-wide">Revolution!</h1>
+                    <button
+                        onClick={() => { socket.emit("game:leave"); navigate("/"); }}
+                        className="font-bold text-base tracking-wide hover:text-gray-300 transition-colors"
+                        title="Go home (you can rejoin)"
+                    >
+                        Revolution!
+                    </button>
                     <span className="text-sm text-gray-500">Round {gameState.roundNumber}</span>
                     <PhaseBadge phase={gameState.phase} />
                 </div>
@@ -337,26 +366,47 @@ export default function GameView({ gameState, userId }: Props) {
                         </div>
                     )}
 
-                    {/* DEV shortcut — only visible in local dev builds */}
+                    {/* DEV shortcuts — only visible in local dev builds */}
                     {import.meta.env.DEV && (
-                        <button
-                            onClick={() => socket.emit("dev:skipToEnd", (res) => {
-                                if (!res.success) console.error("dev:skipToEnd:", res.error);
-                            })}
-                            className="px-2 py-1 text-[10px] bg-red-900/50 hover:bg-red-800/70 text-red-400 hover:text-red-200 rounded border border-red-800/60 transition-colors"
-                            title="DEV: fill board and jump to end screen"
-                        >
-                            ⚡ End Game
-                        </button>
+                        <>
+                            <button
+                                onClick={() => socket.emit("dev:skipToEnd", (res) => {
+                                    if (!res.success) console.error("dev:skipToEnd:", res.error);
+                                })}
+                                className="px-2 py-1 text-[10px] bg-red-900/50 hover:bg-red-800/70 text-red-400 hover:text-red-200 rounded border border-red-800/60 transition-colors"
+                                title="DEV: fill board and jump to end screen"
+                            >
+                                ⚡ End Game
+                            </button>
+                            <button
+                                onClick={() => {
+                                    if (autoPlaying) {
+                                        socket.emit("dev:stopAutoPlay", () => setAutoPlaying(false));
+                                    } else {
+                                        socket.emit("dev:autoPlay", (res) => {
+                                            if (res.success) setAutoPlaying(true);
+                                            else console.error("dev:autoPlay:", res.error);
+                                        });
+                                    }
+                                }}
+                                className={`px-2 py-1 text-[10px] rounded border transition-colors ${
+                                    autoPlaying
+                                        ? "bg-green-900/50 hover:bg-green-800/70 text-green-400 hover:text-green-200 border-green-800/60"
+                                        : "bg-blue-900/50 hover:bg-blue-800/70 text-blue-400 hover:text-blue-200 border-blue-800/60"
+                                }`}
+                                title="DEV: auto-play through all rounds at 600ms per phase"
+                            >
+                                {autoPlaying ? "⏹ Stop" : "🤖 Auto Play"}
+                            </button>
+                        </>
                     )}
 
-                    {/* Home */}
+                    {/* How to Play */}
                     <button
-                        onClick={() => { socket.emit("game:leave"); navigate("/"); }}
+                        onClick={() => setShowHowTo(true)}
                         className="px-3 py-1 text-xs text-gray-400 hover:text-white transition-colors"
-                        title="Leave game and go home (you can rejoin)"
                     >
-                        ← Home
+                        How to Play
                     </button>
 
                     {/* Sign out */}
@@ -405,6 +455,8 @@ export default function GameView({ gameState, userId }: Props) {
                                     <CityBoard
                                         locations={gameState.boardLocations}
                                         playerColorMap={playerColorMap}
+                                        playerScores={playerScoreMap}
+                                        playerUsernames={playerUsernameMap}
                                         onSlotClick={isMySpecialTurn ? handleSlotClick : undefined}
                                         selectedSlots={isMySpecialTurn ? selectedSlots : []}
                                     />
@@ -764,7 +816,7 @@ export default function GameView({ gameState, userId }: Props) {
                         </div>
 
                         <button
-                            onClick={() => { navigate("/"); }}
+                            onClick={() => { localStorage.removeItem("activeRoom"); navigate("/"); }}
                             className="ml-auto px-4 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-gray-300 hover:text-white transition-colors"
                         >
                             Leave
@@ -786,6 +838,8 @@ export default function GameView({ gameState, userId }: Props) {
 
                 </div>
             )}
+
+            {showHowTo && <HowToPlayDialog onClose={() => setShowHowTo(false)} />}
 
         </div>
     );

@@ -94,7 +94,7 @@ export function initializeSocket(httpServer: HttpServer): void {
 
             if (meta?.status === "in_progress" && !isSpectator) {
                 // Don't start a rejoin timer if the game is already finished
-                const gameState = await getGameState(code);
+                const gameState = await getGameState<GameState>(code);
                 if (gameState?.phase === "GAME_OVER") return;
 
                 // Disconnected from an active game — give them 60s to reconnect

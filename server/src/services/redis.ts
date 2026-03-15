@@ -55,6 +55,9 @@ export const keys = {
     // One player's pending bids during bid phase (secret until all submit)
     pendingBids: (code: string, userId: string) => `game:${code}:pendingBids:${userId}`,
 
+    // Per-round history snapshots — appended after each round, dumped to DB at game end
+    roundHistory: (code: string) => `game:${code}:history`,
+
     // Which lobby/game a user is currently in (for reconnect)
     playerCurrent: (userId: string) => `player:${userId}:current`,
 };

@@ -30,10 +30,12 @@ function isBoardFull(boardLocations: GameState["boardLocations"]): boolean {
     return boardLocations.every((loc) => loc.slots.every((slot) => slot.occupiedBy !== null));
 }
 
-// ── awardMajoritySupport ───────────────────────────────────────────────────────
+// ── awardLocationSupport ───────────────────────────────────────────────────────
 // Adds end-game location bonuses to a mutable scores map.
+// The player with the MOST cubes in a location wins its bonus.
+// If two or more players are tied for the most cubes, nobody earns it.
 // Called once at game end after all special actions complete.
-function awardMajoritySupport(
+function awardLocationSupport(
     boardLocations: GameState["boardLocations"],
     scores: Record<string, number>
 ): void {
@@ -46,21 +48,21 @@ function awardMajoritySupport(
         }
 
         let maxCount = 0;
-        let majority: string | null = null;
+        let leader: string | null = null;
         let tied = false;
         for (const [uid, count] of Object.entries(counts)) {
             if (count > maxCount) {
                 maxCount = count;
-                majority = uid;
+                leader = uid;
                 tied = false;
             } else if (count === maxCount) {
                 tied = true;
             }
         }
 
-        // Tied majority → nobody earns the bonus
-        if (majority && !tied && scores[majority] !== undefined) {
-            scores[majority] += loc.endGameSupport;
+        // Tied for most cubes → nobody earns the bonus
+        if (leader && !tied && scores[leader] !== undefined) {
+            scores[leader] += loc.endGameSupport;
         }
     }
 }
@@ -101,6 +103,7 @@ function createInitialState(
         resultsAckUserIds: [],
         winner: null,
         pendingSpecialActions: [],
+        completedSpecialActions: [],
     };
 }
 
@@ -113,6 +116,15 @@ function validateBids(
     let totalGold = 0;
     let totalBlackmail = 0;
     let totalForce = 0;
+
+    // At most 6 bid spaces may receive any tokens
+    const activeBids = bids.filter((b) => b.gold + b.blackmail + b.force > 0);
+    if (activeBids.length > 6) {
+        return {
+            valid: false,
+            error: `You can bid on at most 6 spaces (you bid on ${activeBids.length})`,
+        };
+    }
 
     const seen = new Set<string>();
 
@@ -356,31 +368,50 @@ function resolveRound(
 
 // ── advanceAfterSpecialActions ─────────────────────────────────────────────────
 // Called when the pendingSpecialActions queue drains to zero.
-// Checks board fullness: full → award majority support and GAME_OVER,
-// otherwise → ROUND_OVER.
+// Checks board fullness: full → award location bonuses + convert remaining tokens
+// to support, then GAME_OVER. Otherwise → ROUND_OVER.
+//
+// End-game scoring order:
+//   1. Each player's running support total (accumulated during play)
+//   2. Location bonuses: the player with the most cubes in each location earns
+//      that location's support bonus (ties award nobody)
+//   3. Token conversion: remaining tokens convert to support
+//      (Gold = 1 pt, Blackmail = 3 pts, Force = 5 pts)
 function advanceAfterSpecialActions(state: GameState): GameState {
     if (!isBoardFull(state.boardLocations)) {
         return { ...state, phase: "ROUND_OVER" };
     }
 
-    // Board is full — award end-game majority support bonuses
+    // Step 1: Start from each player's current support total
     const scores: Record<string, number> = {};
     for (const p of state.players) {
         scores[p.userId] = p.score;
     }
-    awardMajoritySupport(state.boardLocations, scores);
 
-    const updatedPlayers = state.players.map((p) => ({
+    // Step 2: Award location bonuses (most cubes wins; ties = nobody)
+    awardLocationSupport(state.boardLocations, scores);
+
+    // Step 3: Convert remaining tokens to support
+    //   Gold = 1 pt · Blackmail = 3 pts · Force = 5 pts
+    for (const p of state.players) {
+        scores[p.userId] =
+            (scores[p.userId] ?? p.score) +
+            p.goldTokens * 1 +
+            p.blackmailTokens * 3 +
+            p.forceTokens * 5;
+    }
+
+    const finalPlayers = state.players.map((p) => ({
         ...p,
         score: scores[p.userId] ?? p.score,
     }));
 
-    const winner = updatedPlayers.reduce((a, b) => (a.score > b.score ? a : b));
+    const winner = finalPlayers.reduce((a, b) => (a.score > b.score ? a : b));
 
     return {
         ...state,
         phase: "GAME_OVER",
-        players: updatedPlayers,
+        players: finalPlayers,
         winner: winner.userId,
     };
 }
@@ -477,6 +508,7 @@ function startNextRound(state: GameState): GameState {
         lastRoundResults: null,
         resultsAckUserIds: [],
         pendingSpecialActions: [],
+        completedSpecialActions: [], // clear for the new round
     };
 }
 
