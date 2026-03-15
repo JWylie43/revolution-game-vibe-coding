@@ -1,4 +1,4 @@
-// components/BidBoardNew.tsx
+// components/BidBoard.tsx
 //
 // HTML/CSS bid board — ported from external BidBoard component.
 // Data model matches the external component:
@@ -332,7 +332,7 @@ function SpaceCard({
                         return (
                             <p
                                 key={i}
-                                className={`text-[10px] leading-snug ${
+                                className={`text-xs leading-snug ${
                                     isInfluence ? "text-indigo-400" : "text-gray-300"
                                 }`}
                             >
@@ -559,7 +559,7 @@ function Legend() {
 
 // ── Board ────────────────────────────────────────────────────────────────────
 
-export default function BidBoardNew({
+export default function BidBoard({
     bids             = {},
     remaining        = { gold: 0, blackmail: 0, force: 0 },
     canBid           = false,

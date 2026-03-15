@@ -9,7 +9,7 @@ import socket from "../services/socket.js";
 import { useAuthStore } from "../store/authStore.js";
 import CityBoard from "../components/CityBoard.js";
 import type { BoardSlot } from "../components/CityBoard.js";
-import BidBoardNew, { BID_SPACE_ORDER, type BidMap, type TokenType } from "../components/BidBoardNew.js";
+import BidBoard, { BID_SPACE_ORDER, type BidMap, type TokenType } from "../components/BidBoard.js";
 import HowToPlayDialog from "../components/HowToPlayDialog.js";
 
 interface Props {
@@ -601,7 +601,7 @@ export default function GameView({ gameState, userId }: Props) {
                             )}
 
                             {/* ── Bid board ─────────────────────────────────────── */}
-                            <BidBoardNew
+                            <BidBoard
                                 bids={bids}
                                 remaining={remaining}
                                 canBid={canBid}

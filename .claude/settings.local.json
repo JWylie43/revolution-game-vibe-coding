@@ -48,7 +48,8 @@
       "Bash(npx prisma db push)",
       "Bash(npx tsc --noEmit -p server/tsconfig.json)",
       "Bash(node_modules/.bin/tsc --noEmit)",
-      "Bash(npx prisma db push --skip-generate)"
+      "Bash(npx prisma db push --skip-generate)",
+      "Bash(del \"C:\\\\Users\\\\wylie\\\\Documents\\\\PersonalProjects\\\\revolution-game-vibe-coding\\\\client\\\\src\\\\components\\\\CityBoardPixi.tsx\")"
     ]
   }
 }
