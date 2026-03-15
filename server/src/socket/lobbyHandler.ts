@@ -32,7 +32,7 @@ import type {
     SocketData,
     GameState,
 } from "./types.js";
-import { serverLog } from "./logger.ts";
+import { serverLog } from "./logger.js";
 import { cancelDisconnectTimer } from "./gameHandler.js";
 
 type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
