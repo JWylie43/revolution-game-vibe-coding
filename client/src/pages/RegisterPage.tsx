@@ -32,7 +32,7 @@ export default function RegisterPage() {
         setIsLoading(true);
         try {
             await register(username, email, password);
-            navigate("/lobby");
+            navigate("/");
         } catch (err: unknown) {
             const message =
                 (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
